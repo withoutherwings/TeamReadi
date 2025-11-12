@@ -2,6 +2,23 @@
 import base64, datetime as dt
 import streamlit as st
 
+import os
+from openai import OpenAI
+
+# Load your API key automatically from environment variables
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Define which embedding model you’ll use
+EMBED_MODEL = "text-embedding-3-large"
+
+
+try:
+    test = client.embeddings.create(model=EMBED_MODEL, input="Project management in construction")
+    st.success(f"Connected! Embedding length: {len(test.data[0].embedding)}")
+except Exception as e:
+    st.error(f"Connection failed: {e}")
+
+
 st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="centered")
 
 # ------------ helpers ------------
