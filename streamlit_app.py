@@ -18,71 +18,68 @@ if not API_KEY:
 client = OpenAI(api_key=API_KEY)
 EMBED_MODEL = "text-embedding-3-large"
 
-st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="centered")
+st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="wide")
+
+# ------------ styles ------------
+NAVY   = "#0b2749"
+ORANGE = "#f89c1c"
+
+st.markdown(f"""
+<style>
+.block-container {{ padding-top: 2rem !important; }}
+.form-card {{
+  border: 3px solid {NAVY};
+  border-radius: 12px;
+  padding: 1.5rem;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}}
+.form-header {{
+  background: {NAVY};
+  color: #fff;
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding: .55rem 1rem;
+  border-radius: 8px;
+  margin: 0 0 .8rem 0;
+}}
+/* Orange accents for inputs/buttons/uploader */
+.stFileUploader > label div[data-testid="stFileUploaderDropzone"] {{
+  border: 2px solid {ORANGE};
+  background: #fff8f0;
+}}
+div.stButton > button:first-child, .stDownloadButton > button {{
+  border: 2px solid {ORANGE};
+  color: {NAVY};
+  font-weight: 600;
+  background: #fff8f0;
+}}
+div.stButton > button:hover, .stDownloadButton > button:hover {{
+  background: {ORANGE} !important; color: #fff !important;
+}}
+[data-testid="stVerticalBlock"] {{ align-items: flex-start; }}
+</style>
+""", unsafe_allow_html=True)
 
 # ------------ helpers ------------
-def _logo_b64(names=("teamreadi-logo.png","TeamReadi Logo.png","TeamReadi_Logo.png","TeamReadi_Icon.png")):
-    for p in names:
-        try:
-            return base64.b64encode(open(p,"rb").read()).decode("utf-8")
-        except Exception:
-            pass
-    return None
-
 def _stash_files(key, uploads):
     st.session_state[key] = []
     for up in (uploads or []):
         st.session_state[key].append({"name": up.name, "data": up.getvalue()})
 
-# ------------ styles ------------
-st.markdown("""
-<style>
-.block-container{padding-top:2rem !important} body{background:#f8fafc}
-.card{border-radius:1rem;overflow:hidden;box-shadow:0 10px 30px rgba(15,47,95,.12);background:white}
-.card-head{padding:1.25rem;color:#fff;background:linear-gradient(135deg,#0f2f5f,#174a8b 40%,#ff9b28)}
-.stepbar{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.72rem}
-.dot{width:24px;height:24px;border-radius:9999px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.2);font-weight:700}
-.line{flex:1;height:2px;background:rgba(255,255,255,.25);margin:0 .5rem}
-.hint{font-size:.75rem;opacity:.95}
-.cta{background:#f58b1f;color:#fff;border-radius:.75rem;padding:.75rem 1.25rem;font-weight:600;border:0}
-.cta:hover{background:#ff9b28}
-</style>
-""", unsafe_allow_html=True)
+# ------------ layout: banner + form ------------
+col1, col2 = st.columns([1, 1], gap="large")
 
-# ---------- header / logo ----------
-logo = _logo_b64()
+# LEFT: your finalized vertical banner PNG
+with col1:
+    st.image("TeamReadi Side Banner.png", use_column_width=True)
 
-# responsive, shadow-free logo
-if logo:
-    st.markdown(
-        f"""
-        <style>
-          .tr-logo img {{
-            width: 360px;               /* default (desktop) */
-            box-shadow: none;           /* no drop shadow */
-            background: none;
-          }}
-          @media (max-width: 768px) {{
-            .tr-logo img {{ width: 280px; }}  /* tablets */
-          }}
-          @media (max-width: 480px) {{
-            .tr-logo img {{ width: 220px; }}  /* phones */
-          }}
-        </style>
-        <div class="tr-logo" style="text-align:center; margin-top:-20px;">
-          <img src="data:image/png;base64,{logo}" alt="TeamReadi logo"/>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-else:
-    # Fallback if base64 helper can't find the file
-    st.image("public/teamreadi-logo.png", width=360)
+# RIGHT: form inside the navy-outlined card
+with col2:
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
-# ------------ form ------------
-with st.container():
-    # Resumes
-    st.subheader("Upload Resumes", divider="gray")
+    # --- Resumes ---
+    st.markdown('<div class="form-header">Upload Resumes</div>', unsafe_allow_html=True)
     resumes = st.file_uploader(
         "Resumes (PDF/DOC/DOCX/TXT)",
         type=["pdf","doc","docx","txt"],
@@ -90,8 +87,8 @@ with st.container():
         label_visibility="collapsed"
     )
 
-    # Project requirements
-    st.subheader("Project Requirements", divider="gray")
+    # --- Project requirements ---
+    st.markdown('<div class="form-header">Project Requirements</div>', unsafe_allow_html=True)
     req_files = st.file_uploader(
         "RFP / Job criteria (PDF/DOC/DOCX/TXT/MD)",
         type=["pdf","doc","docx","txt","md"],
@@ -101,8 +98,8 @@ with st.container():
     )
     req_url = st.text_input("Or paste job/RFP URL here")
 
-    # Calendar
-    st.subheader("Import Calendar", divider="gray")
+    # --- Calendar ---
+    st.markdown('<div class="form-header">Import Calendar</div>', unsafe_allow_html=True)
     cal_method = st.radio("Method", ["Calendar Link","Manual Entry / Upload","Randomize Hours"], horizontal=True)
     cal_link = cal_upload = None
     random_target = None
@@ -117,8 +114,8 @@ with st.container():
     else:
         random_target = st.slider("Average utilization target (%)", 10, 100, 60)
 
-    # Availability
-    st.subheader("Availability Parameters", divider="gray")
+    # --- Availability ---
+    st.markdown('<div class="form-header">Availability Parameters</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
         start_date = st.date_input("Start Date", value=dt.date.today())
@@ -131,24 +128,22 @@ with st.container():
     )
     max_hours = st.number_input("Maximum work hours per day", min_value=1, max_value=12, value=8, step=1)
 
-st.markdown("</div>", unsafe_allow_html=True)  # close card
+    # --- CTA: stash & go ---
+    if st.button("Get Readi!", type="primary", use_container_width=True):
+        _stash_files("resumes", resumes)
+        _stash_files("req_files", req_files)
+        st.session_state.update({
+            "req_url": req_url or "",
+            "cal_method": cal_method,
+            "cal_link": cal_link or "",
+            "random_target": random_target,
+            "cal_upload": None if cal_upload is None else {"name": cal_upload.name, "data": cal_upload.getvalue()},
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "workdays": workdays,
+            "max_hours": int(max_hours),
+            "alpha": float(SKILL_WEIGHT),  # fixed weighting
+        })
+        st.switch_page("pages/01_Results.py")
 
-# ------------ CTA: stash & go ------------
-if st.button("Get Readi!", type="primary", use_container_width=True):
-    _stash_files("resumes", resumes)
-    _stash_files("req_files", req_files)
-    st.session_state.update({
-        "req_url": req_url or "",
-        "cal_method": cal_method,
-        "cal_link": cal_link or "",
-        "random_target": random_target,
-        "cal_upload": None if cal_upload is None else {"name": cal_upload.name, "data": cal_upload.getvalue()},
-        "start_date": str(start_date),
-        "end_date": str(end_date),
-        "workdays": workdays,
-        "max_hours": int(max_hours),
-        # send fixed weight through to Results page
-        "alpha": float(SKILL_WEIGHT),
-    })
-    st.switch_page("pages/01_Results.py")
-
+    st.markdown('</div>', unsafe_allow_html=True)  # close .form-card
