@@ -1,23 +1,22 @@
-# app.py  — TeamReadi Landing (collects inputs, then routes to Results)
+# app.py — TeamReadi Landing (collects inputs, then routes to Results)
 import base64, datetime as dt
 import streamlit as st
 
 import os
 from openai import OpenAI
 
-# Load your API key automatically from environment variables
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# --- fixed weighting (no slider anywhere) ---
+SKILL_WEIGHT = 0.70  # 70% skills, 30% availability
 
-# Define which embedding model you’ll use
+# Load your API key automatically (Streamlit Secrets preferred; env as fallback)
+API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+if not API_KEY:
+    st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="centered")
+    st.error("OPENAI_API_KEY is not set. Add it in Streamlit Secrets or as an environment variable.")
+    st.stop()
+
+client = OpenAI(api_key=API_KEY)
 EMBED_MODEL = "text-embedding-3-large"
-
-
-try:
-    test = client.embeddings.create(model=EMBED_MODEL, input="Project management in construction")
-    st.success(f"Connected! Embedding length: {len(test.data[0].embedding)}")
-except Exception as e:
-    st.error(f"Connection failed: {e}")
-
 
 st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="centered")
 
@@ -80,7 +79,6 @@ else:
     # Fallback if base64 helper can't find the file
     st.image("public/teamreadi-logo.png", width=360)
 
-
 # ------------ form ------------
 with st.container():
     # Resumes
@@ -133,10 +131,6 @@ with st.container():
     )
     max_hours = st.number_input("Maximum work hours per day", min_value=1, max_value=12, value=8, step=1)
 
-    # Blend control
-    alpha = st.slider("Weight on Skills (α)", 0.0, 1.0, 0.7, 0.05,
-                      help="ReadiScore = α·SkillFit + (1–α)·AvailabilityFit")
-
 st.markdown("</div>", unsafe_allow_html=True)  # close card
 
 # ------------ CTA: stash & go ------------
@@ -153,6 +147,8 @@ if st.button("Get Readi!", type="primary", use_container_width=True):
         "end_date": str(end_date),
         "workdays": workdays,
         "max_hours": int(max_hours),
-        "alpha": float(alpha),
+        # send fixed weight through to Results page
+        "alpha": float(SKILL_WEIGHT),
     })
     st.switch_page("pages/01_Results.py")
+
