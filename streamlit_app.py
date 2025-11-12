@@ -3,15 +3,15 @@ import os, json, base64, datetime as dt
 import streamlit as st
 from openai import OpenAI
 
-# ----- UI page config -----
+# ---------------- UI SETUP ----------------
 st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
 
-# ----- Fixed weighting (use this OR your slider's alpha) -----
+# ----- Fixed weighting -----
 SKILL_WEIGHT = 0.70  # 70% skills, 30% availability
 
-# ----- OpenAI setup (reads from Streamlit Secrets or env) -----
+# ----- OpenAI setup -----
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-MODEL_NAME = st.secrets.get("MODEL_NAME", "gpt-4o")  # large-context
+MODEL_NAME = st.secrets.get("MODEL_NAME", "gpt-4o")
 EMBED_MODEL = st.secrets.get("EMBED_MODEL", "text-embedding-3-large")
 
 if not API_KEY:
@@ -20,100 +20,40 @@ if not API_KEY:
 
 client = OpenAI(api_key=API_KEY)
 
+# ---------------- STYLING ----------------
+st.markdown("""
+<style>
+  .main { background:#F7F8FA; }
+  .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1180px; }
 
-# ---- THEME COLORS (tweak here if needed) ----
-NAVY = "#10233D"       # deep navy
-NAVY_600 = "#1A2F4C"
-NAVY_700 = "#0B1F3A"
-ORANGE = "#FF8A1E"     # primary orange
-ORANGE_600 = "#F27B00"
-MUTED = "#98A2B3"      # gray for help text
-BG = "#F7F8FA"         # soft page bg
-CARD_BG = "#FFFFFF"
+  /* CARD STYLE */
+  .card { background:#FFF; border-radius:14px; box-shadow:0 6px 24px rgba(16,35,61,.12);
+          border:1px solid rgba(16,35,61,.06); overflow:hidden; }
+  .card.narrow { max-width:860px; margin-left:auto; margin-right:auto; }
+  .card-header { background:linear-gradient(135deg,#0B1F3A 0%, #FF8A1E 100%);
+                 color:#fff; padding:18px 22px; font-weight:700; letter-spacing:.2px; font-size:1.05rem; }
+  .card-body { padding:18px; }
 
-# ---- GLOBAL CSS ----
-st.markdown(
-    f"""
-    <style>
-      .main {{ background:{BG}; }}
-      /* remove default padding so our card sits tight */
-      .block-container {{ padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1180px; }}
-      /* two-column heights align */
-      .equal-col > div {{ height: 100%; }}
+  .sec-title { color:#10233D; font-weight:700; margin:8px 0 6px; }
+  .stFileUploader > div { border:1px dashed rgba(16,35,61,.25)!important; border-radius:10px; }
 
-      /* RIGHT CARD (form) */
-      .card {{
-        background: {CARD_BG};
-        border-radius: 14px;
-        box-shadow: 0 6px 24px rgba(16, 35, 61, 0.12);
-        border: 1px solid rgba(16, 35, 61, 0.06);
-        overflow: hidden;
-      }}
-      .card-header {{
-        background: linear-gradient(135deg, {NAVY_700} 0%, {ORANGE} 100%);
-        color: white;
-        padding: 18px 22px;
-        font-weight: 700;
-        letter-spacing: .2px;
-        font-size: 1.05rem;
-      }}
-      .card-body {{ padding: 18px; }}
+  /* FORM SUBMIT BUTTON */
+  div.stForm button[kind="formSubmit"] {
+      width:100%;
+      padding:12px 16px;
+      border-radius:10px;
+      border:0;
+      background:#FF8A1E;
+      color:#fff;
+      font-weight:800;
+      letter-spacing:.2px;
+  }
+  div.stForm button[kind="formSubmit"]:hover { background:#F27B00; }
 
-      /* section titles */
-      .sec-title {{
-        color: {NAVY};
-        font-weight: 700;
-        margin: 8px 0 6px;
-      }}
-      .hint {{ color: {MUTED}; font-size: 0.85rem; margin-top: -2px; }}
+  header[data-testid="stHeader"] { background:transparent; }
+</style>
+""", unsafe_allow_html=True)
 
-      /* uploader boxes look like dashed areas in the mock */
-      .stFileUploader > div {{ border: 1px dashed rgba(16,35,61,.25) !important; border-radius: 10px; }}
-      .stFileUploadDropzone {{
-        background: #FBFCFE !important;
-      }}
-
-      /* radio/checkbox paddings */
-      .stRadio > label, .stCheckbox > label {{ color: {NAVY}; }}
-      .days-row .stCheckbox {{ margin-right: .6rem; }}
-
-      /* button */
-      div.stButton > button {{
-        width: 100%;
-        padding: 12px 16px;
-        border-radius: 10px;
-        border: 0;
-        background: {ORANGE};
-        color: #fff;
-        font-weight: 800;
-        letter-spacing: .2px;
-      }}
-      div.stButton > button:hover {{ background: {ORANGE_600}; }}
-
-      /* inputs */
-      .stTextInput input, .stNumberInput input, .stDateInput input {{
-        border-radius: 10px !important;
-      }}
-
-      /* remove random top "box" spacing users sometimes see */
-      header[data-testid="stHeader"] {{ background: transparent; }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ---- LAYOUT: LEFT BANNER | RIGHT FORM ----
-left, right = st.columns([0.9, 1.3], gap="large")
-
-with left:
-    st.markdown("<div class='equal-col'>", unsafe_allow_html=True)
-    st.image("TeamReadi Side Banner.png", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with right:
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
 
     with st.form("generate_form", clear_on_submit=False):
         # --- Upload Resumes ---
