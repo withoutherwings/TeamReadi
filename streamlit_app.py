@@ -23,100 +23,106 @@ st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="wide")
 # ------------ styles ------------
 NAVY   = "#0b2749"
 ORANGE = "#f89c1c"
-LIGHT  = "#f6f7fb"
+LIGHT  = "#f8fafc"
 
 st.markdown(f"""
 <style>
-/* Page spacing */
-.block-container {{ padding-top: 1.25rem !important; }}
-
-/* Keep columns equal and tidy on desktop */
-@media (min-width: 992px) {{
-  [data-testid="column"] > div:first-child {{ 
-    max-width: 720px;    /* cap each column width */
-    margin: 0 auto; 
-  }}
+.block-container {{
+  padding-top: 1.5rem !important;
+  max-width: 1500px;
 }}
 
-/* Banner image: fit screen height, not too tall */
+[data-testid="stHorizontalBlock"] > div:first-child,
+[data-testid="column"] > div:first-child {{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}}
+
 [data-testid="stImage"] img {{
-  max-height: 82vh;     /* never exceed viewport height */
+  max-height: 82vh;
   width: auto;
-  height: auto;
   object-fit: contain;
   border-radius: 12px;
 }}
 
-/* Form card look (no gradient) */
+/* Form container styling */
 .form-card {{
-  border: 2px solid {NAVY};
-  border-radius: 16px;
-  padding: 1.25rem;
+  border: 3px solid {NAVY};
+  border-radius: 18px;
   background: #fff;
-  box-shadow: 0 2px 12px rgba(0,0,0,.06);
+  padding: 2rem;
+  box-shadow: 0 3px 10px rgba(11,39,73,0.1);
+  max-width: 720px;
+  margin: auto;
 }}
 
-/* Section headers like your original */
+/* Section headers */
 .form-header {{
   background: {NAVY};
   color: #fff;
   font-weight: 700;
-  font-size: 1.05rem;
-  padding: .6rem 1rem;
+  font-size: 1.1rem;
+  padding: .65rem 1rem;
   border-radius: 10px;
-  margin: .25rem 0 .9rem 0;
+  margin-bottom: .8rem;
 }}
 
-/* Inputs: softer, rounded */
-.stTextInput > div > div > input,
-.stNumberInput input,
-.stDateInput input {{
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  height: 44px;
-}}
-
-/* File uploader: dashed light card with orange focus */
+/* File upload area */
 .stFileUploader > label div[data-testid="stFileUploaderDropzone"] {{
-  border: 2px dashed rgba(11,39,73,.18);
+  border: 2px dashed rgba(11,39,73,.2);
   background: {LIGHT};
-  border-radius: 14px;
+  border-radius: 12px;
 }}
 .stFileUploader > label div[data-testid="stFileUploaderDropzone"]:hover {{
   border-color: {ORANGE};
+  background: #fff8f0;
 }}
 
-/* Radio "pills" */
-.stRadio > div > label {{
+/* Inputs and date fields */
+.stTextInput input, .stNumberInput input, .stDateInput input {{
+  border-radius: 8px;
   border: 1.5px solid #e5e7eb;
+  height: 42px;
+}}
+
+/* Radio buttons as pills */
+.stRadio > div > label {{
+  border: 1.5px solid #dcdfe4;
   border-radius: 999px;
-  padding: .35rem .7rem;
+  padding: .3rem .9rem;
   margin-right: .4rem;
+  font-weight: 500;
+  color: {NAVY};
 }}
 .stRadio > div > label:hover {{
   border-color: {ORANGE};
+  background: #fff8f0;
 }}
 .stRadio input:checked + div + label, 
 .stRadio input:checked + label {{
   border-color: {ORANGE};
-  box-shadow: 0 0 0 2px rgba(248,156,28,.15) inset;
+  background: #fff8f0;
+  color: {NAVY};
+  font-weight: 600;
 }}
 
-/* CTA button in orange */
+/* CTA Button */
 div.stButton > button {{
   width: 100%;
-  height: 48px;
+  height: 50px;
   border-radius: 999px;
+  background: {ORANGE};
+  color: white;
   font-weight: 700;
   border: 2px solid {ORANGE};
-  color: #fff;
-  background: {ORANGE};
+  box-shadow: 0 2px 6px rgba(248,156,28,.25);
 }}
 div.stButton > button:hover {{
-  filter: brightness(.95);
+  background: #e88c0f;
+  border-color: #e88c0f;
 }}
 
-[data-testid="stVerticalBlock"] {{ align-items: flex-start; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -124,7 +130,6 @@ div.stButton > button:hover {{
 col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
-    # scale automatically but never exceed ~viewport height (CSS above)
     st.image("TeamReadi Side Banner.png", use_column_width=True)
 
 with col2:
