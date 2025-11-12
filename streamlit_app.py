@@ -1,15 +1,25 @@
 # app.py — TeamReadi Landing (collects inputs, then routes to Results)
-import base64, datetime as dt
+import os, json, base64, datetime as dt
 import streamlit as st
-
-import os
 from openai import OpenAI
 
-# app.py — TeamReadi "Generate New Report" UI clone
-import datetime as dt
-import streamlit as st
-
+# ----- UI page config -----
 st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
+
+# ----- Fixed weighting (use this OR your slider's alpha) -----
+SKILL_WEIGHT = 0.70  # 70% skills, 30% availability
+
+# ----- OpenAI setup (reads from Streamlit Secrets or env) -----
+API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+MODEL_NAME = st.secrets.get("MODEL_NAME", "gpt-4o")  # large-context
+EMBED_MODEL = st.secrets.get("EMBED_MODEL", "text-embedding-3-large")
+
+if not API_KEY:
+    st.error("OPENAI_API_KEY is not set. Add it in .streamlit/secrets.toml or as an env var.")
+    st.stop()
+
+client = OpenAI(api_key=API_KEY)
+
 
 # ---- THEME COLORS (tweak here if needed) ----
 NAVY = "#10233D"       # deep navy
