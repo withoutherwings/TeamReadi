@@ -20,6 +20,24 @@ if not API_KEY:
 
 client = OpenAI(api_key=API_KEY)
 
+# ---- LAYOUT: LEFT BANNER | RIGHT FORM ----
+left, right = st.columns([0.9, 1.3], gap="large")
+
+with left:
+    st.image("TeamReadi Side Banner.png", use_container_width=True)
+
+with right:
+    st.markdown("<div class='card narrow'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
+
+    with st.form("generate_form", clear_on_submit=False):
+        # your inputs go here ...
+        _, mid, _ = st.columns([1, 2, 1])
+        with mid:
+            submitted = st.form_submit_button("Get Readi!")
+
+
 # ---------------- STYLING ----------------
 st.markdown("""
 <style>
