@@ -21,36 +21,69 @@ client = OpenAI(api_key=API_KEY)
 # ---------------- STYLING ----------------
 st.markdown("""
 <style>
-  /* PAGE */
-  .main { background:#ffffff; } /* white page */
-  .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1180px; }
+  /* PAGE BACKGROUND – force everything white */
+  html, body, .stApp, [data-testid="stAppViewContainer"], .main {
+    background-color:#ffffff !important;
+  }
+  .block-container {
+    padding-top:1.2rem;
+    padding-bottom:2rem;
+    max-width:1180px;
+  }
 
   /* CARD */
   .card{
-    background:#FFFFFF; border-radius:14px; overflow:hidden;
+    background:#FFFFFF;
+    border-radius:14px;
+    overflow:hidden;                           /* header + body share same shell */
     border:1px solid rgba(16,35,61,.08);
     box-shadow:0 10px 28px rgba(16,35,61,.10); /* subtle shadow around the form only */
   }
-  .card.narrow { max-width:720px; margin-left:auto; margin-right:auto; } /* narrower */
-  .card-header{
-    background:#10233D; color:#fff;
-    padding:18px 22px; font-weight:700; letter-spacing:.2px; font-size:1.05rem;
-    border-top-left-radius:14px; border-top-right-radius:14px; /* rounded navy block */
+  .card.narrow{
+    max-width:640px;                           /* narrower so it feels lighter */
+    margin-left:auto;
+    margin-right:auto;
   }
+
+  /* HEADER – solid navy, rounded top corners, attached to card */
+  .card-header{
+    background:#10233D;
+    color:#fff;
+    padding:18px 22px;
+    font-weight:700;
+    letter-spacing:.2px;
+    font-size:1.05rem;
+    border-top-left-radius:14px;
+    border-top-right-radius:14px;
+  }
+
   .card-body{ padding:18px; }
 
-  /* SECTIONS + UPLOADS */
-  .sec-title{ color:#10233D; font-weight:700; margin:8px 0 6px; }
-  .stFileUploader > div{ border:1px dashed rgba(16,35,61,.25)!important; border-radius:10px; }
+  /* SECTION TITLES & UPLOADS */
+  .sec-title{
+    color:#10233D;
+    font-weight:700;
+    margin:8px 0 6px;
+  }
+  .stFileUploader > div{
+    border:1px dashed rgba(16,35,61,.25) !important;
+    border-radius:10px;
+  }
 
-  /* ORANGE SUBMIT — handle all Streamlit variants with !important */
+  /* ORANGE SUBMIT – force Streamlit’s form button to our brand color */
   div.stForm button[kind="formSubmit"],
   div.stForm button,
   div.stForm [data-testid="baseButton-primaryFormSubmit"],
   div.stForm [data-testid="baseButton-secondaryFormSubmit"]{
-      width:100%; padding:12px 16px; border-radius:10px; border:0 !important;
-      background:#FF8A1E !important; color:#ffffff !important;
-      font-weight:800; letter-spacing:.2px; box-shadow:0 2px 0 rgba(0,0,0,.06);
+      width:100%;
+      padding:12px 16px;
+      border-radius:10px;
+      border:0 !important;
+      background:#FF8A1E !important;
+      color:#ffffff !important;
+      font-weight:800;
+      letter-spacing:.2px;
+      box-shadow:0 2px 0 rgba(0,0,0,.06);
   }
   div.stForm button:hover,
   div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
@@ -58,13 +91,16 @@ st.markdown("""
       background:#F27B00 !important;
   }
 
-  /* Remove default app header tint */
-  header[data-testid="stHeader"]{ background:transparent; }
+  /* Remove default Streamlit header tint */
+  header[data-testid="stHeader"]{
+    background:transparent;
+  }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------- LAYOUT ----------------
-left, right = st.columns([0.9, 1.3], gap="large")
+# Slightly more balanced split; form column won’t dominate
+left, right = st.columns([1, 1.1], gap="large")
 
 with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
@@ -76,78 +112,98 @@ with right:
 
     # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
-        # --- Upload Resumes ---
-        st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
-        resumes = st.file_uploader(
-            "Drag & drop files here, or browse",
-            type=["pdf", "doc", "docx", "txt"],
-            accept_multiple_files=True,
-            label_visibility="collapsed",
-        )
-        st.caption("PDF, DOC, DOCX, TXT")
 
-        # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>", unsafe_allow_html=True)
-        proj = st.file_uploader(
-            "Drag & drop files here, or browse",
-            type=["pdf", "doc", "docx", "txt", "md"],
-            accept_multiple_files=True,
-            key="proj",
-            label_visibility="collapsed",
-        )
-        req_url = st.text_input("Or paste job / RFP URL")
+        # two columns *inside* the card so the form isn't as tall
+        left_col, right_col = st.columns(2, gap="large")
 
-        st.markdown("---")
-
-        # --- Import Calendar ---
-        st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
-        cal_mode = st.radio(
-            "Calendar import mode",
-            options=["Calendar link", "Manual entry / upload", "Randomize hours"],
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-
-        cal_url = ""
-        cal_file = None
-        randomize_seed = None
-
-        if cal_mode == "Calendar link":
-            cal_url = st.text_input(
-                "Paste a public or shared calendar URL (Google, Outlook, etc.)",
-                placeholder="https://...", help="Must be publicly available."
+        # -------- LEFT COLUMN: Resumes, Requirements, Calendar --------
+        with left_col:
+            # --- Upload Resumes ---
+            st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
+            resumes = st.file_uploader(
+                "Drag & drop files here, or browse",
+                type=["pdf", "doc", "docx", "txt"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
             )
-        elif cal_mode == "Manual entry / upload":
-            cal_file = st.file_uploader("Upload .ics file", type=["ics"], key="cal_ics")
-            st.caption("ICS only for now.")
-        else:
-            randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
+            st.caption("PDF, DOC, DOCX, TXT")
 
-        st.markdown("---")
+            # --- Project Requirements ---
+            st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>",
+                        unsafe_allow_html=True)
+            proj = st.file_uploader(
+                "Drag & drop files here, or browse",
+                type=["pdf", "doc", "docx", "txt", "md"],
+                accept_multiple_files=True,
+                key="proj",
+                label_visibility="collapsed",
+            )
+            req_url = st.text_input("Or paste job / RFP URL")
 
-        # --- Availability Parameters ---
-        st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            start_date = st.date_input("Start date", value=dt.date.today())
-        with c2:
-            end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
+            st.markdown("---")
 
-        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
-        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        defaults = [True, True, True, True, True, False, False]
-        dcols = st.columns(7)
-        workdays_checks = []
-        for i, col in enumerate(dcols):
-            with col:
-                workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
-        selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
+            # --- Import Calendar ---
+            st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
+            cal_mode = st.radio(
+                "Calendar import mode",
+                options=["Calendar link", "Manual entry / upload", "Randomize hours"],
+                horizontal=True,
+                label_visibility="collapsed",
+            )
 
-        max_daily = st.number_input(
-            "Maximum work hours per day", min_value=1.0, max_value=12.0, value=8.0, step=1.0, help=None
-        )
+            cal_url = ""
+            cal_file = None
+            randomize_seed = None
 
-        # Centered orange CTA
+            if cal_mode == "Calendar link":
+                cal_url = st.text_input(
+                    "Paste a public or shared calendar URL (Google, Outlook, etc.)",
+                    placeholder="https://...", help="Must be publicly available."
+                )
+            elif cal_mode == "Manual entry / upload":
+                # FIX: actually show a CSV/XLSX uploader for manual mode
+                cal_file = st.file_uploader(
+                    "Upload CSV or spreadsheet (employee_id, start, end, hours)",
+                    type=["csv", "xlsx"],
+                    key="cal_csv",
+                )
+                st.caption("CSV / XLSX only. One row per busy block.")
+            else:
+                randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
+
+        # -------- RIGHT COLUMN: Availability --------
+        with right_col:
+            st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                start_date = st.date_input("Start date", value=dt.date.today())
+            with c2:
+                end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
+
+            st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>",
+                        unsafe_allow_html=True)
+            day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            defaults = [True, True, True, True, True, False, False]
+            dcols = st.columns(7)
+            workdays_checks = []
+            for i, col in enumerate(dcols):
+                with col:
+                    workdays_checks.append(
+                        st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}")
+                    )
+            selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
+
+            max_daily = st.number_input(
+                "Maximum work hours per day",
+                min_value=1.0,
+                max_value=12.0,
+                value=8.0,
+                step=1.0,
+                help=None,
+            )
+
+        # -------- BOTTOM: centered CTA spanning the full card --------
+        st.markdown("")  # small spacer
         _, mid, _ = st.columns([1, 2, 1])
         with mid:
             submitted = st.form_submit_button("Get Readi!")
