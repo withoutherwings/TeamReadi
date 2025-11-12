@@ -18,77 +18,112 @@ if not API_KEY:
 client = OpenAI(api_key=API_KEY)
 EMBED_MODEL = "text-embedding-3-large"
 
-# ------------ layout: banner + ONE uniform report form ------------
-PANEL_H = 800  # 👈 make this match your banner's visible height (px)
+# ------------ layout: banner + ONE uniform report form (equal height) ------------
 
-st.markdown(f"""
+st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="wide")
+
+# helper to embed image as base64 so we can fully control CSS sizing
+def _img_b64(path: str) -> str:
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        return ""
+
+BANNER_PATH = "TeamReadi Side Banner.png"   # <- your left graphic
+banner_b64 = _img_b64(BANNER_PATH)
+
+st.markdown("""
 <style>
-:root {{
-  --navy: #001f3f;
-  --orange: #ff7a00;
-  --panel-h: {PANEL_H}px;
-}}
-.form-card {{
-    background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
-    border: 3px solid var(--navy);
-    border-radius: 20px;
-    padding: 2rem;
-    width: 100%;
-    max-width: 560px;
-    min-height: var(--panel-h);
-    box-shadow: 0 4px 20px rgba(0,0,0,0.10);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}}
-.form-card h3 {{
-    margin: 0 0 .25rem 0;
-    text-align: center;
-    color: var(--navy);
-}}
+:root{
+  --navy:#001f3f;
+  --orange:#ff7a00;
+  /* Equal height for both columns: scales with screen, capped for large monitors */
+  --panel-h: clamp(560px, 80vh, 900px);
+}
+
+/* Shared framed box (used by banner + form) */
+.frame{
+  border:3px solid var(--navy);
+  border-radius:20px;
+  background:#fff;
+  height:var(--panel-h);
+  width:100%;
+  box-shadow:0 4px 20px rgba(0,0,0,.10);
+  overflow:hidden;              /* keep content inside rounded corners */
+}
+
+/* Banner image must scale INSIDE the frame */
+.frame .banner{
+  width:100%;
+  height:100%;
+  object-fit:contain;           /* keep proportions, no cropping, no stretch */
+  display:block;
+}
+
+/* Form panel styling */
+.form-card{
+  background:linear-gradient(180deg,#ffffff 0%,#f9fafc 100%);
+  height:var(--panel-h);        /* exact same height as banner */
+  border:3px solid var(--navy);
+  border-radius:20px;
+  padding:2rem;
+  box-shadow:0 4px 20px rgba(0,0,0,.10);
+  display:flex;
+  flex-direction:column;
+  gap:.75rem;
+}
+
 /* Inputs */
 .form-card .stTextInput input,
 .form-card .stDateInput input,
-.form-card .stSelectbox div[data-baseweb="select"] > div,
-.form-card .stTextArea textarea {{
-    border: 1px solid #cfcfcf;
-    border-radius: 10px;
-}}
-/* Radio: orange outline highlight style */
-div[role="radiogroup"] label {{
-    border: 2px solid #e6e6e6;
-    border-radius: 10px;
-    padding: 8px 10px;
-    margin-right: 10px;
-}}
-div[role="radiogroup"] input:checked + div + label,
-div[role="radiogroup"] label:has(input:checked) {{
-    border-color: var(--orange);
-    box-shadow: 0 0 0 2px rgba(255,122,0,.12);
-}}
+.form-card .stTextArea textarea{
+  border:1px solid #cfcfcf;
+  border-radius:10px;
+}
+
+/* Radio: orange outline highlight */
+div[role="radiogroup"] label{
+  border:2px solid #e6e6e6;
+  border-radius:10px;
+  padding:8px 10px;
+  margin-right:10px;
+}
+div[role="radiogroup"] label:has(input:checked){
+  border-color:var(--orange);
+  box-shadow:0 0 0 2px rgba(255,122,0,.12);
+}
+
 /* Button */
-.stButton>button {{
-    background-color: var(--orange) !important;
-    color: white !important;
-    border-radius: 12px !important;
-    border: none !important;
-    font-weight: 700 !important;
-    width: 100%;
-    height: 3rem;
-}}
-.stButton>button:hover {{ background-color: #e66a00 !important; }}
+.stButton>button{
+  background-color:var(--orange) !important;
+  color:#fff !important;
+  border:none !important;
+  border-radius:12px !important;
+  font-weight:700 !important;
+  width:100%;
+  height:3rem;
+}
+.stButton>button:hover{ background-color:#e66a00 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Side-by-side
-col1, col2 = st.columns([1, 1], gap="large")
+# Two columns — equal height via CSS variables above
+col1, col2 = st.columns([1,1], gap="large")
 
 with col1:
-    # Left banner (shown as-is). Adjust PANEL_H above so the right panel matches it.
-    st.image("TeamReadi Side Banner.png", use_column_width=True)
+    # Use HTML <img> so CSS can set object-fit/height exactly
+    if banner_b64:
+        st.markdown(
+            f"<div class='frame'><img class='banner' src='data:image/png;base64,{banner_b64}' alt='TeamReadi banner'/></div>",
+            unsafe_allow_html=True
+        )
+    else:
+        # fallback if file missing
+        st.markdown("<div class='frame'></div>", unsafe_allow_html=True)
 
 with col2:
-    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    st.markdown("<div class='form-card'>", unsafe_allow_html=True)
     st.markdown("### Generate New Report")
 
     # Upload Resumes
@@ -138,9 +173,9 @@ with col2:
     )
     max_hours = st.number_input("Maximum work hours per day", min_value=1, max_value=12, value=8, step=1)
 
-    st.markdown("<div style='margin-top: .5rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:.5rem'></div>", unsafe_allow_html=True)
     if st.button("Get Readi!", use_container_width=True):
-        # assumes you have _stash_files defined elsewhere in your app
+        # assumes _stash_files exists elsewhere in your code
         _stash_files("resumes", resumes)
         _stash_files("req_files", req_files)
         st.session_state.update({
