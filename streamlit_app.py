@@ -21,48 +21,47 @@ client = OpenAI(api_key=API_KEY)
 # ---------------- STYLING ----------------
 st.markdown("""
 <style>
-  /* Page */
-  .main { background:#ffffff; }                               /* white page background */
+  /* PAGE */
+  .main { background:#ffffff; } /* white page */
   .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1180px; }
 
-  /* Card */
-  .card { background:#FFFFFF; border-radius:14px; overflow:hidden;
-          border:1px solid rgba(16,35,61,.08);
-          box-shadow:0 10px 28px rgba(16,35,61,.10); }         /* subtle shadow only around card */
-  .card.narrow { max-width:860px; margin:0 auto; }             /* center + narrower */
-  .card-header { background:#10233D;                           /* SOLID NAVY */
-                 color:#fff; padding:18px 22px; font-weight:700;
-                 letter-spacing:.2px; font-size:1.05rem; }
-  .card-body { padding:18px; }
-
-  .sec-title { color:#10233D; font-weight:700; margin:8px 0 6px; }
-  .stFileUploader > div { border:1px dashed rgba(16,35,61,.25)!important; border-radius:10px; }
-
-  /* Orange submit button inside Streamlit forms */
-  div.stForm button[kind="formSubmit"],
-  div.stForm [data-testid="baseButton-primaryFormSubmit"],
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
-      width:100%;
-      padding:12px 16px;
-      border-radius:10px;
-      border:0 !important;
-      background:#FF8A1E !important;          /* force orange */
-      color:#ffffff !important;
-      font-weight:800;
-      letter-spacing:.2px;
-      box-shadow:0 2px 0 rgba(0,0,0,.06);
+  /* CARD */
+  .card{
+    background:#FFFFFF; border-radius:14px; overflow:hidden;
+    border:1px solid rgba(16,35,61,.08);
+    box-shadow:0 10px 28px rgba(16,35,61,.10); /* subtle shadow around the form only */
   }
-  div.stForm button[kind="formSubmit"]:hover,
+  .card.narrow { max-width:720px; margin-left:auto; margin-right:auto; } /* narrower */
+  .card-header{
+    background:#10233D; color:#fff;
+    padding:18px 22px; font-weight:700; letter-spacing:.2px; font-size:1.05rem;
+    border-top-left-radius:14px; border-top-right-radius:14px; /* rounded navy block */
+  }
+  .card-body{ padding:18px; }
+
+  /* SECTIONS + UPLOADS */
+  .sec-title{ color:#10233D; font-weight:700; margin:8px 0 6px; }
+  .stFileUploader > div{ border:1px dashed rgba(16,35,61,.25)!important; border-radius:10px; }
+
+  /* ORANGE SUBMIT — handle all Streamlit variants with !important */
+  div.stForm button[kind="formSubmit"],
+  div.stForm button,
+  div.stForm [data-testid="baseButton-primaryFormSubmit"],
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"]{
+      width:100%; padding:12px 16px; border-radius:10px; border:0 !important;
+      background:#FF8A1E !important; color:#ffffff !important;
+      font-weight:800; letter-spacing:.2px; box-shadow:0 2px 0 rgba(0,0,0,.06);
+  }
+  div.stForm button:hover,
   div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
-      background:#F27B00 !important;          /* darker on hover */
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover{
+      background:#F27B00 !important;
   }
 
   /* Remove default app header tint */
-  header[data-testid="stHeader"] { background:transparent; }
+  header[data-testid="stHeader"]{ background:transparent; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ---------------- LAYOUT ----------------
 left, right = st.columns([0.9, 1.3], gap="large")
@@ -75,7 +74,7 @@ with right:
     st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
     st.markdown("<div class='card-body'>", unsafe_allow_html=True)
 
-    # ---------- SINGLE FORM (only one!) ----------
+    # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
@@ -145,8 +144,7 @@ with right:
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
         max_daily = st.number_input(
-            "Maximum work hours per day", min_value=1.0, max_value=12.0, value=8.0, step=1.0,
-            help=None  # no default hint text
+            "Maximum work hours per day", min_value=1.0, max_value=12.0, value=8.0, step=1.0, help=None
         )
 
         # Centered orange CTA
@@ -171,7 +169,6 @@ if submitted:
         "end_date": str(end_date),
         "workdays": selected_days,
         "max_hours": float(max_daily),
-        "alpha": SKILL_WEIGHT,  # or swap to a slider in the UI if you prefer
+        "alpha": SKILL_WEIGHT,
     })
-    # Navigate to results page
     st.switch_page("pages/01_Results.py")
