@@ -21,98 +21,120 @@ if not API_KEY:
 client = OpenAI(api_key=API_KEY)
 
 # ---------------- STYLING ----------------
-st.markdown("""
+st.markdown(
+    """
 <style>
-  /* PAGE BACKGROUND – force everything white */
+  /* PAGE BACKGROUND – hard white */
   html, body, .stApp, [data-testid="stAppViewContainer"], .main {
-    background-color:#ffffff !important;
+    background-color: #ffffff !important;
   }
   .block-container {
-    padding-top:1.2rem;
-    padding-bottom:2rem;
-    max-width:1180px;
+    padding-top: 1.2rem;
+    padding-bottom: 2rem;
+    max-width: 1180px;
   }
 
-  /* CARD */
-  .card{
-    background:#FFFFFF;
-    border-radius:14px;
-    overflow:hidden;                           /* header + body share same shell */
-    border:1px solid rgba(16,35,61,.08);
-    box-shadow:0 10px 28px rgba(16,35,61,.10); /* subtle shadow around the form only */
-  }
-  .card.narrow{
-    max-width:720px;                           /* comfortable width */
-    margin-left:auto;
-    margin-right:auto;
+  /* Make the RIGHT column (form) look like a card by styling the form element */
+  [data-testid="stForm"] {
+    background: #FFFFFF;
+    border-radius: 14px;
+    border: 1px solid rgba(16,35,61,.08);
+    box-shadow: 0 10px 28px rgba(16,35,61,.10);
+    padding: 0 18px 18px 18px;  /* top handled by header */
   }
 
-  /* HEADER – solid navy, rounded top corners, attached to card */
-  .card-header{
-    background:#10233D;
-    color:#fff;
-    padding:18px 22px;
-    font-weight:700;
-    letter-spacing:.2px;
-    font-size:1.05rem;
-    border-top-left-radius:14px;
-    border-top-right-radius:14px;
+  /* Header bar INSIDE the form, flush to edges */
+  .card-header {
+    background: #10233D;
+    color: #ffffff;
+    padding: 14px 18px;
+    font-weight: 700;
+    letter-spacing: .2px;
+    font-size: 1.05rem;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    margin: -18px -18px 12px -18px;  /* stretch to form edges, remove gap */
   }
 
-  .card-body{ padding:18px; }
-
-  /* SECTION TITLES & UPLOADS */
-  .sec-title{
-    color:#10233D;
-    font-weight:700;
-    margin:8px 0 6px;
-  }
-  .stFileUploader > div{
-    border:1px dashed rgba(16,35,61,.25) !important;
-    border-radius:10px;
+  /* Section titles */
+  .sec-title {
+    color: #10233D;
+    font-weight: 700;
+    margin: 8px 0 6px;
   }
 
-  /* ORANGE SUBMIT – force Streamlit’s form button to our brand color */
+  /* Upload boxes */
+  .stFileUploader > div {
+    border: 1px dashed rgba(16,35,61,.25) !important;
+    border-radius: 10px;
+  }
+
+  /* Text inputs – always visible */
+  .stTextInput input {
+    border-radius: 10px !important;
+    border: 1px solid #D0D5DD !important;   /* light gray by default */
+    padding: 8px 10px;
+    background-color: #FFFFFF;
+  }
+  .stTextInput input:focus {
+    border: 1px solid #FF8A1E !important;   /* orange on focus */
+    outline: none !important;
+    box-shadow: 0 0 0 1px rgba(255,138,30,.25);
+  }
+
+  /* Number input border match */
+  .stNumberInput input {
+    border-radius: 10px !important;
+    border: 1px solid #D0D5DD !important;
+  }
+  .stNumberInput input:focus {
+    border: 1px solid #FF8A1E !important;
+    outline: none !important;
+    box-shadow: 0 0 0 1px rgba(255,138,30,.25);
+  }
+
+  /* Orange submit button inside the form */
   div.stForm button[kind="formSubmit"],
   div.stForm button,
   div.stForm [data-testid="baseButton-primaryFormSubmit"],
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"]{
-      width:100%;
-      padding:12px 16px;
-      border-radius:10px;
-      border:0 !important;
-      background:#FF8A1E !important;
-      color:#ffffff !important;
-      font-weight:800;
-      letter-spacing:.2px;
-      box-shadow:0 2px 0 rgba(0,0,0,.06);
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 0 !important;
+      background: #FF8A1E !important;
+      color: #ffffff !important;
+      font-weight: 800;
+      letter-spacing: .2px;
+      box-shadow: 0 2px 0 rgba(0,0,0,.06);
   }
   div.stForm button:hover,
   div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover{
-      background:#F27B00 !important;
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
+      background: #F27B00 !important;
   }
 
   /* Remove default Streamlit header tint */
-  header[data-testid="stHeader"]{
-    background:transparent;
+  header[data-testid="stHeader"] {
+    background: transparent;
   }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ---------------- LAYOUT ----------------
-left, right = st.columns([1, 1.1], gap="large")
+# 1/3 banner : 2/3 form
+left, right = st.columns([1, 2], gap="large")
 
 with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
 
 with right:
-    st.markdown("<div class='card narrow'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
-
-    # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
+
+        # Attached navy header
+        st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
 
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
@@ -149,19 +171,21 @@ with right:
 
         cal_url = ""
         randomize_seed = None
-        cal_file = None   # no manual upload in this version
+        cal_file = None  # no manual upload in this version
 
         if cal_mode == "Calendar link":
             cal_url = st.text_input(
                 "Paste a public or shared calendar URL (Google, Outlook, etc.)",
                 placeholder="https://...",
-                help="Must be publicly available (read-only)."
+                help="Must be publicly available (read-only).",
             )
-        else:  # Randomize hours (demo mode)
+        else:
             randomize_seed = st.slider(
                 "Average utilization target (%)",
-                min_value=10, max_value=100, value=60,
-                help="Used to generate demo availability when no real calendar is connected."
+                min_value=10,
+                max_value=100,
+                value=60,
+                help="Used to generate demo availability when no real calendar is connected.",
             )
 
         st.markdown("---")
@@ -202,23 +226,23 @@ with right:
         with mid:
             submitted = st.form_submit_button("Get Readi!")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
 # ---------------- HANDLE SUBMIT ----------------
 if submitted:
-    # Save inputs to session for the Results page
     st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
     st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
-    st.session_state.update({
-        "req_url": req_url or "",
-        "cal_method": cal_mode,
-        "cal_link": cal_url or "",
-        "random_target": randomize_seed,
-        "cal_upload": None,  # no manual upload path in this version
-        "start_date": str(start_date),
-        "end_date": str(end_date),
-        "workdays": selected_days,
-        "max_hours": float(max_daily),
-        "alpha": SKILL_WEIGHT,
-    })
+    st.session_state.update(
+        {
+            "req_url": req_url or "",
+            "cal_method": cal_mode,
+            "cal_link": cal_url or "",
+            "random_target": randomize_seed,
+            "cal_upload": None,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "workdays": selected_days,
+            "max_hours": float(max_daily),
+            "alpha": SKILL_WEIGHT,
+        }
+    )
     st.switch_page("pages/01_Results.py")
+
