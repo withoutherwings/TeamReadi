@@ -5,117 +5,201 @@ import streamlit as st
 import os
 from openai import OpenAI
 
-# --- fixed weighting (no slider anywhere) ---
-SKILL_WEIGHT = 0.70  # 70% skills, 30% availability
+# app.py — TeamReadi "Generate New Report" UI clone
+import datetime as dt
+import streamlit as st
 
-# Load your API key automatically (Streamlit Secrets preferred; env as fallback)
-API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-if not API_KEY:
-    st.set_page_config(page_title="TeamReadi", page_icon="✅", layout="centered")
-    st.error("OPENAI_API_KEY is not set. Add it in Streamlit Secrets or as an environment variable.")
-    st.stop()
+st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
 
-client = OpenAI(api_key=API_KEY)
-EMBED_MODEL = "text-embedding-3-large"
+# ---- THEME COLORS (tweak here if needed) ----
+NAVY = "#10233D"       # deep navy
+NAVY_600 = "#1A2F4C"
+NAVY_700 = "#0B1F3A"
+ORANGE = "#FF8A1E"     # primary orange
+ORANGE_600 = "#F27B00"
+MUTED = "#98A2B3"      # gray for help text
+BG = "#F7F8FA"         # soft page bg
+CARD_BG = "#FFFFFF"
 
-# ---- final layout: left banner (no border), right form (bordered) ----
-col1, col2 = st.columns([1,1], gap="large")
-
-with col1:
-    st.image("TeamReadi Side Banner.png", use_column_width=True)  # no frame, no CSS
-
-with col2:
-    st.markdown("""
+# ---- GLOBAL CSS ----
+st.markdown(
+    f"""
     <style>
-    :root{ --navy:#001f3f; --orange:#ff7a00; --panel-h: clamp(560px,80vh,900px); }
-    .form-card{
-        background:#fff; border:3px solid var(--navy); border-radius:20px;
-        height:var(--panel-h); box-shadow:0 4px 20px rgba(0,0,0,.10);
-        display:flex; flex-direction:column; overflow:hidden;
-    }
-    .form-header{ background:linear-gradient(135deg,#123e78, #1e5799 30%, #ed9a3f 100%);
-        color:#fff; padding:18px 22px 22px 22px; }
-    .form-title{ font-size:22px; font-weight:750; margin:0 0 4px 0; }
-    .form-sub{ opacity:.9; font-size:13px; margin:0 0 10px 0; }
-    .steps{ display:flex; gap:26px; align-items:center; font-size:12px; }
-    .step{ display:flex; gap:10px; align-items:center; color:#e9eef6; }
-    .bullet{ width:22px; height:22px; border-radius:999px; background:rgba(255,255,255,.18);
-             display:grid; place-items:center; font-weight:700; }
-    .step.active .bullet{ background:#fff; color:#1e457a; } .step.active{ color:#fff; }
-    .form-body{ padding:18px 22px 22px 22px; overflow:auto; }
-    .dropzone{ border:2px dashed #d9dee7; border-radius:12px; padding:14px;
-               background:linear-gradient(180deg,#fff 0%,#fbfcfe 100%); }
-    div[role="radiogroup"] label{ border:2px solid #e6e6e6; border-radius:10px; padding:8px 10px; margin-right:10px; }
-    div[role="radiogroup"] label:has(input:checked){ border-color:var(--orange); box-shadow:0 0 0 2px rgba(255,122,0,.12); }
-    .stTextInput input, .stDateInput input, .stTextArea textarea{ border:1px solid #cfcfcf; border-radius:10px; }
-    .stButton>button{ background:var(--orange) !important; color:#fff !important; border:none !important;
-                      border-radius:12px !important; font-weight:750 !important; width:100%; height:3rem; }
-    .stButton>button:hover{ background:#e66a00 !important; }
+      .main {{ background:{BG}; }}
+      /* remove default padding so our card sits tight */
+      .block-container {{ padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1180px; }}
+      /* two-column heights align */
+      .equal-col > div {{ height: 100%; }}
+
+      /* RIGHT CARD (form) */
+      .card {{
+        background: {CARD_BG};
+        border-radius: 14px;
+        box-shadow: 0 6px 24px rgba(16, 35, 61, 0.12);
+        border: 1px solid rgba(16, 35, 61, 0.06);
+        overflow: hidden;
+      }}
+      .card-header {{
+        background: linear-gradient(135deg, {NAVY_700} 0%, {ORANGE} 100%);
+        color: white;
+        padding: 18px 22px;
+        font-weight: 700;
+        letter-spacing: .2px;
+        font-size: 1.05rem;
+      }}
+      .card-body {{ padding: 18px; }}
+
+      /* section titles */
+      .sec-title {{
+        color: {NAVY};
+        font-weight: 700;
+        margin: 8px 0 6px;
+      }}
+      .hint {{ color: {MUTED}; font-size: 0.85rem; margin-top: -2px; }}
+
+      /* uploader boxes look like dashed areas in the mock */
+      .stFileUploader > div {{ border: 1px dashed rgba(16,35,61,.25) !important; border-radius: 10px; }}
+      .stFileUploadDropzone {{
+        background: #FBFCFE !important;
+      }}
+
+      /* radio/checkbox paddings */
+      .stRadio > label, .stCheckbox > label {{ color: {NAVY}; }}
+      .days-row .stCheckbox {{ margin-right: .6rem; }}
+
+      /* button */
+      div.stButton > button {{
+        width: 100%;
+        padding: 12px 16px;
+        border-radius: 10px;
+        border: 0;
+        background: {ORANGE};
+        color: #fff;
+        font-weight: 800;
+        letter-spacing: .2px;
+      }}
+      div.stButton > button:hover {{ background: {ORANGE_600}; }}
+
+      /* inputs */
+      .stTextInput input, .stNumberInput input, .stDateInput input {{
+        border-radius: 10px !important;
+      }}
+
+      /* remove random top "box" spacing users sometimes see */
+      header[data-testid="stHeader"] {{ background: transparent; }}
     </style>
-    """, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-    st.markdown('<div class="form-card">', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="form-header">
-      <div class="form-title">Generate New Report</div>
-      <div class="form-sub">Upload resumes, import calendars, set availability, and generate a demo in minutes.</div>
-      <div class="steps">
-        <div class="step active"><div class="bullet">1</div><div>Resumes</div></div>
-        <div class="step"><div class="bullet">2</div><div>Calendar</div></div>
-        <div class="step"><div class="bullet">3</div><div>Review</div></div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+# ---- LAYOUT: LEFT BANNER | RIGHT FORM ----
+left, right = st.columns([0.9, 1.3], gap="large")
 
-    st.markdown('<div class="form-body">', unsafe_allow_html=True)
+with left:
+    st.markdown("<div class='equal-col'>", unsafe_allow_html=True)
+    st.image("TeamReadi Side Banner.png", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # Upload Resumes
-    st.markdown('<div class="dropzone">', unsafe_allow_html=True)
-    resumes = st.file_uploader("Drag & drop files here, or Browse",
-        type=["pdf","doc","docx","txt"], accept_multiple_files=True, label_visibility="collapsed")
-    st.caption("PDF, DOC, DOCX")
-    st.markdown('</div>', unsafe_allow_html=True)
+with right:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
 
-    # Project Requirements (upload + URL)
-    st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="dropzone">', unsafe_allow_html=True)
-    req_files = st.file_uploader("Drag & drop project requirements here, or Browse",
-        type=["pdf","doc","docx","txt","md"], accept_multiple_files=True, key="req_files",
-        label_visibility="collapsed")
-    st.caption("Limit 200MB per file • PDF, DOC, DOCX, TXT, MD")
-    st.markdown('</div>', unsafe_allow_html=True)
-    req_url = st.text_input("Paste job/RFP URL here (optional)")
+    with st.form("generate_form", clear_on_submit=False):
+        # --- Upload Resumes ---
+        st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
+        resumes = st.file_uploader(
+            "Drag & drop files here, or browse",
+            type=["pdf", "doc", "docx"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+        st.markdown("<div class='hint'>PDF, DOC, DOCX</div>", unsafe_allow_html=True)
 
-    # Calendar + Availability (unchanged from your current version)…
-    calendar_method = st.radio("", ["Calendar Link","Manual Entry / Upload","Randomize Hours"],
-                               index=0, horizontal=True, label_visibility="collapsed")
-    cal_link = cal_upload = None; random_target = None
-    if calendar_method == "Calendar Link":
-        cal_link = st.text_input("Paste calendar link here (Google, Outlook, etc.)")
-    elif calendar_method == "Manual Entry / Upload":
-        cal_upload = st.file_uploader("Upload .ics / CSV / spreadsheet", type=["ics","csv","xls","xlsx"], key="cal_csv")
-    else:
-        random_target = st.slider("Average utilization target (%)", 10, 100, 60)
+        # --- Upload Project Details ---
+        st.markdown("<div class='sec-title' style='margin-top:10px;'>Upload project details</div>", unsafe_allow_html=True)
+        proj = st.file_uploader(
+            "Drag & drop files here, or browse",
+            type=["pdf", "doc", "docx", "csv", "xlsx"],
+            accept_multiple_files=True,
+            key="proj",
+            label_visibility="collapsed",
+        )
+        st.markdown("<div class='hint'>PDF, DOC, DOCX, CSV, XLSX</div>", unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:  start_date = st.date_input("Start Date")
-    with c2:  end_date   = st.date_input("End Date")
-    workdays = st.multiselect("Working Days", ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
-                              default=["Mon","Tue","Wed","Thu","Fri"])
-    max_hours = st.number_input("Maximum work hours per day", 1, 12, 8, 1)
+        st.markdown("---")
 
-    if st.button("Get Readi!", use_container_width=True):
-        _stash_files("resumes", resumes); _stash_files("req_files", req_files)
-        st.session_state.update({
-            "req_url": req_url or "", "cal_method": calendar_method, "cal_link": cal_link or "",
-            "random_target": random_target,
-            "cal_upload": None if cal_upload is None else {"name": cal_upload.name, "data": cal_upload.getvalue()},
-            "start_date": str(start_date), "end_date": str(end_date),
-            "workdays": workdays, "max_hours": int(max_hours), "alpha": float(SKILL_WEIGHT),
-        })
-        st.switch_page("pages/01_Results.py")
+        # --- Import Calendar ---
+        st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
+        cal_mode = st.radio(
+            "Calendar import mode",
+            options=["Calendar link", "Manual entry / upload", "Randomize hours"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
 
-    st.markdown('</div>', unsafe_allow_html=True)  # end form-body
-    st.markdown('</div>', unsafe_allow_html=True)  # end form-card
+        cal_url = None
+        cal_file = None
+        randomize_seed = None
 
+        if cal_mode == "Calendar link":
+            cal_url = st.text_input("Paste a public or shared calendar URL (Google, Outlook, etc.)", placeholder="https://...")
+        elif cal_mode == "Manual entry / upload":
+            cal_file = st.file_uploader(
+                "Upload CSV or spreadsheet (columns: employee_id, start, end, hours)", type=["csv", "xlsx"], key="cal_csv"
+            )
+            st.markdown("<div class='hint'>CSV or spreadsheet import</div>", unsafe_allow_html=True)
+        else:
+            randomize_seed = st.number_input("Great for demos: seed", min_value=0, value=42, step=1)
+
+        st.markdown("---")
+
+        # --- Availability Parameters ---
+        st.markdown("<div class='sec-title'>Availability parameters</div>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            start_date = st.date_input("Start date", value=dt.date.today())
+        with c2:
+            end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
+
+        # Working days
+        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
+        dcols = st.columns(7)
+        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        defaults = [True, True, True, True, True, False, False]
+        workdays = []
+        for i, col in enumerate(dcols):
+            with col:
+                workdays.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
+
+        # Max hours/day
+        max_daily = st.number_input("Maximum work hours per day", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+        st.markdown("<div class='hint'>Defaults to 8; narrow input (1–12) if needed.</div>", unsafe_allow_html=True)
+
+        submitted = st.form_submit_button("Get Readi!")
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+# ---- BACKEND STUB (all inputs operable; wire to your logic here) ----
+if 'results' not in st.session_state:
+    st.session_state.results = None
+
+if submitted:
+    st.success("Inputs captured. (This is where your scoring + scheduling logic runs.)")
+    st.session_state.results = {
+        "resume_files": [f.name for f in resumes] if resumes else [],
+        "project_files": [f.name for f in proj] if proj else [],
+        "calendar_mode": cal_mode,
+        "calendar_url": cal_url,
+        "calendar_file": (cal_file.name if cal_file else None),
+        "random_seed": randomize_seed,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "workdays": [d for d, keep in zip(day_labels, workdays) if keep],
+        "max_hours_per_day": float(max_daily),
+    }
+
+# Optional: echo the captured state (hide in production)
+with st.expander("Debug: current form payload"):
+    st.write(st.session_state.results)
 
