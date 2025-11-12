@@ -21,30 +21,48 @@ client = OpenAI(api_key=API_KEY)
 # ---------------- STYLING ----------------
 st.markdown("""
 <style>
-  .main { background:#F7F8FA; }
+  /* Page */
+  .main { background:#ffffff; }                               /* white page background */
   .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1180px; }
 
-  /* CARD STYLE */
-  .card { background:#FFF; border-radius:14px; box-shadow:0 6px 24px rgba(16,35,61,.12);
-          border:1px solid rgba(16,35,61,.06); overflow:hidden; }
-  .card.narrow { max-width:860px; margin-left:auto; margin-right:auto; }
-  .card-header { background:linear-gradient(135deg,#0B1F3A 0%, #FF8A1E 100%);
-                 color:#fff; padding:18px 22px; font-weight:700; letter-spacing:.2px; font-size:1.05rem; }
+  /* Card */
+  .card { background:#FFFFFF; border-radius:14px; overflow:hidden;
+          border:1px solid rgba(16,35,61,.08);
+          box-shadow:0 10px 28px rgba(16,35,61,.10); }         /* subtle shadow only around card */
+  .card.narrow { max-width:860px; margin:0 auto; }             /* center + narrower */
+  .card-header { background:#10233D;                           /* SOLID NAVY */
+                 color:#fff; padding:18px 22px; font-weight:700;
+                 letter-spacing:.2px; font-size:1.05rem; }
   .card-body { padding:18px; }
 
   .sec-title { color:#10233D; font-weight:700; margin:8px 0 6px; }
   .stFileUploader > div { border:1px dashed rgba(16,35,61,.25)!important; border-radius:10px; }
 
-  /* FORM SUBMIT BUTTON (orange, full-width, centered via columns) */
-  div.stForm button[kind="formSubmit"] {
-      width:100%; padding:12px 16px; border-radius:10px; border:0;
-      background:#FF8A1E; color:#fff; font-weight:800; letter-spacing:.2px;
+  /* Orange submit button inside Streamlit forms */
+  div.stForm button[kind="formSubmit"],
+  div.stForm [data-testid="baseButton-primaryFormSubmit"],
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
+      width:100%;
+      padding:12px 16px;
+      border-radius:10px;
+      border:0 !important;
+      background:#FF8A1E !important;          /* force orange */
+      color:#ffffff !important;
+      font-weight:800;
+      letter-spacing:.2px;
+      box-shadow:0 2px 0 rgba(0,0,0,.06);
   }
-  div.stForm button[kind="formSubmit"]:hover { background:#F27B00; }
+  div.stForm button[kind="formSubmit"]:hover,
+  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
+      background:#F27B00 !important;          /* darker on hover */
+  }
 
+  /* Remove default app header tint */
   header[data-testid="stHeader"] { background:transparent; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---------------- LAYOUT ----------------
 left, right = st.columns([0.9, 1.3], gap="large")
