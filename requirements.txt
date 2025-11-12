@@ -1,1 +1,6 @@
 streamlit
+python-docx
+pymupdf
+icalendar
+openai>=1.40.0
+pandas
