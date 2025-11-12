@@ -33,27 +33,36 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ------------ header / logo ------------
+# ---------- header / logo ----------
 logo = _logo_b64()
+
+# responsive, shadow-free logo
 if logo:
     st.markdown(
-        f'<p style="text-align:center;margin:0 0 .75rem 0">'
-        f'<img src="data:image/png;base64,{logo}" style="width:220px;opacity:.95;filter:drop-shadow(0 4px 12px rgba(0,0,0,.15))" />'
-        f'</p>', unsafe_allow_html=True
+        f"""
+        <style>
+          .tr-logo img {{
+            width: 360px;               /* default (desktop) */
+            box-shadow: none;           /* no drop shadow */
+            background: none;
+          }}
+          @media (max-width: 768px) {{
+            .tr-logo img {{ width: 280px; }}  /* tablets */
+          }}
+          @media (max-width: 480px) {{
+            .tr-logo img {{ width: 220px; }}  /* phones */
+          }}
+        </style>
+        <div class="tr-logo" style="text-align:center; margin-top:-20px;">
+          <img src="data:image/png;base64,{logo}" alt="TeamReadi logo"/>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
+else:
+    # Fallback if base64 helper can't find the file
+    st.image("public/teamreadi-logo.png", width=360)
 
-st.markdown("""
-<div class="card"><div class="card-head">
-  <h3 style="margin:0;font-weight:700;">Generate New Report</h3>
-  <div class="hint">Upload resumes, project requirements, import calendars, set availability, and generate <b>results</b> in minutes.</div>
-  <div class="stepbar">
-    <div class="dot">1</div><div>RESUMES</div><div class="line"></div>
-    <div class="dot">2</div><div>REQUIREMENTS</div><div class="line"></div>
-    <div class="dot">3</div><div>CALENDAR</div><div class="line"></div>
-    <div class="dot">4</div><div>REVIEW</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
 
 # ------------ form ------------
 with st.container():
