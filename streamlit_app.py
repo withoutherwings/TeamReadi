@@ -1,4 +1,4 @@
-# app.py — TeamReadi Landing (complete replacement)
+# app.py — TeamReadi Landing
 
 import os, json, base64, datetime as dt
 import streamlit as st
@@ -11,10 +11,8 @@ from backend.calendar_backend import llm_explain_employee
 # ---------------- UI SETUP ----------------
 st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
 
-# ----- Fixed weighting (used later in scoring logic) -----
 SKILL_WEIGHT = 0.70
 
-# ----- OpenAI setup -----
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 MODEL_NAME = st.secrets.get("MODEL_NAME", "gpt-4o")
 EMBED_MODEL = st.secrets.get("EMBED_MODEL", "text-embedding-3-large")
@@ -29,46 +27,61 @@ client = OpenAI(api_key=API_KEY)
 st.markdown(
     """
 <style>
-  /* Page background + main container */
-  .main { background:#ffffff; }
+  /* Make whole app white */
+  body, .stApp, .main {
+      background:#ffffff !important;
+  }
   .block-container {
       padding-top:0.8rem;
       padding-bottom:1.4rem;
       max-width:1200px;
   }
 
-  /* Two-column wrapper: take almost full viewport height */
+  /* Force the two columns to fill the viewport height */
   [data-testid="stHorizontalBlock"] {
       height: calc(100vh - 80px);
       align-items:stretch;
   }
 
-  /* BANNER: keep same height as card */
-  .banner-shell {
-      height: 100%;
-      max-height: 680px;
+  /* --- LEFT COLUMN (banner) --- */
+  /* Make the first column flex so its content can stretch */
+  [data-testid="column"]:first-child {
+      display:flex;
+      align-items:stretch;
+  }
+  /* Make the children of that column also flex */
+  [data-testid="column"]:first-child > div {
+      flex:1;
       display:flex;
       align-items:center;
       justify-content:center;
   }
-  .banner-shell img {
+  /* Any image in the first column should scale to fill height */
+  [data-testid="column"]:first-child [data-testid="stImage"] img {
       height:100%;
       width:auto;
       object-fit:contain;
   }
 
-  /* Card shell: header + body in ONE card */
-  .card {
-      background:#FFFFFF;
-      border-radius:24px;
-      border:1px solid rgba(16,35,61,.12);
-      box-shadow:0 12px 30px rgba(16,35,61,.10);
-      overflow:hidden;
+  /* --- RIGHT COLUMN (form card) --- */
+  /* Use the Streamlit form as the actual card */
+  [data-testid="stForm"] {
+      background:#FFFFFF !important;
+      border-radius:24px !important;
+      border:1px solid rgba(16,35,61,.12) !important;
+      box-shadow:0 12px 30px rgba(16,35,61,.10) !important;
+      padding:0 !important;
       height:100%;
       max-height:680px;
       display:flex;
       flex-direction:column;
+      overflow:hidden;
   }
+  [data-testid="stForm"] > div {
+      padding:0 !important;
+      background:transparent !important;
+  }
+
   .card-header {
       background:#0F243D;
       color:#ffffff;
@@ -76,28 +89,12 @@ st.markdown(
       font-weight:700;
       letter-spacing:.2px;
       font-size:1.1rem;
-      border-radius:24px 24px 0 0;
   }
   .card-body {
       padding:18px 24px 18px 24px;
-      background:#F9FAFB;
-      border-radius:0 0 24px 24px;
+      background:#FFFFFF;
       flex:1;
       overflow-y:auto;
-  }
-
-  /* Kill Streamlit's default "floating card" on st.form */
-  [data-testid="stForm"] {
-      padding:0 !important;
-      margin-top:0 !important;
-      background:transparent !important;
-      border:none !important;
-      box-shadow:none !important;
-  }
-  [data-testid="stForm"] > div {
-      padding:0 !important;
-      background:transparent !important;
-      box-shadow:none !important;
   }
 
   .sec-title {
@@ -112,26 +109,23 @@ st.markdown(
       margin-top:2px;
   }
 
-  /* Uploaders */
   .stFileUploader > div {
       border-radius:18px !important;
       border:1px dashed rgba(16,35,61,.25) !important;
       background:#FFFFFF !important;
   }
 
-  /* Text inputs (URLs etc.) */
   .stTextInput > div > input {
       border-radius:10px !important;
       border:1px solid rgba(16,35,61,.25) !important;
       background:#FFFFFF !important;
   }
 
-  /* Number + date inputs */
   .stNumberInput input, .stDateInput input {
       border-radius:10px !important;
   }
 
-  /* Orange submit button: ALWAYS */
+  /* Orange Get Readi button */
   button[kind="formSubmit"],
   [data-testid="baseButton-primaryFormSubmit"],
   [data-testid="baseButton-secondaryFormSubmit"] {
@@ -158,22 +152,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT: 1/3 BANNER | 2/3 FORM ----------------
-banner_col, form_col = st.columns([1, 2], gap="large")
+# ---------------- LAYOUT: 50 / 50 ----------------
+banner_col, form_col = st.columns([1, 1], gap="large")
 
 with banner_col:
-    st.markdown("<div class='banner-shell'>", unsafe_allow_html=True)
-    st.image("TeamReadi Side Banner.png", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.image("TeamReadi Side Banner.png")
 
 with form_col:
-    # ONE unified card: header + body
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
-
-    # ---------------- FORM ----------------
+    # Use the form itself as the card; header + body are just inside
     with st.form("generate_form", clear_on_submit=False):
+        st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-body'>", unsafe_allow_html=True)
+
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
         resumes = st.file_uploader(
@@ -263,8 +253,8 @@ with form_col:
         with cta_mid:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
+        # close card-body div
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if "submitted" in locals() and submitted:
@@ -285,5 +275,4 @@ if "submitted" in locals() and submitted:
         }
     )
 
-    # Navigate to results page
     st.switch_page("pages/01_Results.py")
