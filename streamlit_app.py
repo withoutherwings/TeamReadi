@@ -28,7 +28,14 @@ client = OpenAI(api_key=API_KEY)
 # ---------------- STYLING ----------------
 st.markdown(
     """
+
+
 <style>
+
+  html, body, .stApp, .main {
+      background:#ffffff !important;
+  }
+
   /* Page background + main container */
   .main { background:#ffffff; }
   .block-container {
@@ -86,10 +93,27 @@ st.markdown(
       background:#FFFFFF !important;
   }
 
+    /* Make the entire page background white */
+  html, body, .stApp, .main {
+      background:#ffffff !important;
+  }
+
+  /* Give the FORM a visible card border and remove the gap above it */
+  [data-testid="stForm"] {
+      background:#FFFFFF !important;
+      border-radius:24px !important;
+      border:1px solid rgba(16,35,61,.18) !important;
+      box-shadow:0 12px 30px rgba(16,35,61,.10) !important;
+      padding:0 !important;
+      margin-top:0 !important;
+      margin-bottom:0 !important;
+  }
+
   /* Number + date inputs */
   .stNumberInput input, .stDateInput input {
       border-radius:10px !important;
   }
+
 
   /* Orange submit button inside form */
   div.stForm button[kind="formSubmit"],
