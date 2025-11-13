@@ -8,6 +8,7 @@ Backend logic for TeamReadi:
 """
 
 import os
+import re
 import requests
 import datetime as dt
 from typing import Optional, Dict, Any, List, Set
@@ -30,30 +31,50 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Helper functions
 # =======================
 
+def _canonical_emp_id(raw: str) -> Optional[str]:
+    """
+    Normalize 'Employee 1', 'employee_01', 'EMPLOYEE-001', 'John - employee 7'
+    to 'Employee_007'. If no 'employee + number' pattern is found, return None.
+    """
+    if not raw:
+        return None
+    m = re.search(r"employee[\s_\-]*([0-9]+)", raw, re.IGNORECASE)
+    if not m:
+        return None
+    n = int(m.group(1))
+    return f"Employee_{n:03d}"
+
+
 def _parse_employee_id(summary: str, description: str) -> Optional[str]:
     """
-    Extract Employee_XXX ID from summary or description.
-    Formats supported:
-        'Employee_017 - Site Visit'
+    Extract canonical Employee_XXX ID from summary or description.
+
+    Formats supported (examples):
+        'Employee 17 - Site Visit'
+        'employee_017 | Project Meeting'
+        'EMPLOYEE-7: Coordination Call'
         'EmployeeID: Employee_017 | Notes: ...'
     """
     summary = summary or ""
     description = description or ""
 
-    # Try prefix in summary
-    if summary.startswith("Employee_"):
-        token = summary.split(" ", 1)[0].strip()
-        if token.count("_") == 1:
-            return token
+    # Try matching directly in the summary text
+    eid = _canonical_emp_id(summary)
+    if eid:
+        return eid
 
-    # Try in description
+    # Try a more explicit 'EmployeeID:' marker in the description
     marker = "EmployeeID:"
     if marker in description:
         after = description.split(marker, 1)[1].strip()
-        # e.g., 'Employee_017 | Notes: ...'
-        token = after.split("|", 1)[0].strip()
-        if token.startswith("Employee_"):
-            return token
+        eid = _canonical_emp_id(after)
+        if eid:
+            return eid
+
+    # Fallback: also try a direct scan of the description
+    eid = _canonical_emp_id(description)
+    if eid:
+        return eid
 
     return None
 
@@ -85,9 +106,8 @@ def compute_capacity_hours(
     Compute capacity hours between start_date and end_date
     given selected working_days (0=Mon .. 6=Sun) and hours_per_day.
     """
-    # If user somehow passes an empty set, default to Mon–Fri
     if not working_days:
-        working_days = {0, 1, 2, 3, 4}
+        working_days = {0, 1, 2, 3, 4}  # fallback Mon–Fri
 
     cur = start_date
     total_days = 0
@@ -137,9 +157,8 @@ def fetch_calendar_hours_by_employee(
     resp.raise_for_status()
     cal = Calendar.from_ical(resp.content)
 
+    # Canonical employee IDs (we'll still only return metrics for the requested IDs)
     employee_ids = list(set(employee_ids))
-
-    # Capacity based on user choices
     capacity_hours = compute_capacity_hours(
         start_date=window_start.date(),
         end_date=window_end.date(),
@@ -162,7 +181,7 @@ def fetch_calendar_hours_by_employee(
         description = str(comp.get("description", "") or "")
 
         emp_id = _parse_employee_id(summary, description)
-        if emp_id not in data:
+        if not emp_id or emp_id not in data:
             continue
 
         dtstart = comp.decoded("dtstart")
@@ -280,4 +299,3 @@ Write 3–5 sentences:
     )
 
     return resp.output[0].content[0].text
-
