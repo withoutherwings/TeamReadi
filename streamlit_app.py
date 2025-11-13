@@ -38,31 +38,28 @@ html, body {
     padding-bottom:2rem;
 }
 
-/* Outer card that holds the whole form */
-.tr-card {
-    background:#FFFFFF;
+/* Full-width navy header bar inside the right column */
+.tr-main-title {
+    background:#10233D;
+    color:#ffffff;
+    padding:18px 26px;
+    font-weight:700;
+    font-size:1.15rem;
+    letter-spacing:.2px;
     border-radius:18px;
-    border:1px solid rgba(16,35,61,.08);
+    display:block;
+    width:100%;
     box-shadow:0 10px 28px rgba(16,35,61,.10);
-    overflow:hidden;
+    margin-bottom:18px;
 }
 
-/* Light gray body area inside that card */
+/* Light gray panel behind the form content */
 .tr-body {
     background:#F8F9FC;
     padding:22px 24px 26px;
-}
-
-/* Embedded main title INSIDE the form card */
-.tr-main-title {
-    display:inline-block;
-    background:#10233D;
-    color:#ffffff;
-    padding:10px 18px;
-    border-radius:12px;
-    font-weight:800;
-    font-size:1.1rem;
-    margin-bottom:16px;
+    border-radius:18px;
+    border:1px solid rgba(16,35,61,.08);
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
 }
 
 /* Section titles */
@@ -140,12 +137,13 @@ with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Right: one card containing embedded title + body
+# Right: header bar + gray form panel
 with right:
-    st.markdown("<div class='tr-card'><div class='tr-body'>", unsafe_allow_html=True)
-
-    # Embedded title at the very top of the card
+    # Full-width navy header (no extra bubble above it)
     st.markdown("<div class='tr-main-title'>Generate New Report</div>", unsafe_allow_html=True)
+
+    # Gray panel containing the actual form
+    st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
 
     # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
@@ -233,8 +231,8 @@ with right:
         with g2:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    # close gray body
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if "submitted" in locals() and submitted:
