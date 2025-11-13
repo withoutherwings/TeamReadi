@@ -1,4 +1,4 @@
-# app.py — TeamReadi Landing
+# app.py — TeamReadi Landing (stable, compact layout)
 
 import os, json, base64, datetime as dt
 import streamlit as st
@@ -27,7 +27,7 @@ client = OpenAI(api_key=API_KEY)
 st.markdown(
     """
 <style>
-  /* Make whole app white */
+  /* White page */
   body, .stApp, .main {
       background:#ffffff !important;
   }
@@ -37,11 +37,9 @@ st.markdown(
       max-width:1200px;
   }
 
-  /* Row behaves like a flex row that fills (at least) the viewport height */
+  /* Let the row behave normally; just align items nicely */
   [data-testid="stHorizontalBlock"] {
-      display:flex;
-      align-items:stretch;
-      min-height: calc(100vh - 80px);
+      align-items:flex-start;
   }
 
   /* --- LEFT COLUMN (banner) --- */
@@ -55,10 +53,9 @@ st.markdown(
       align-items:center;
       justify-content:center;
   }
-  /* Banner image scales to fill column height */
   [data-testid="column"]:first-child [data-testid="stImage"] img {
-      height:100%;
-      width:auto;
+      width:100%;
+      height:auto;
       object-fit:contain;
   }
 
@@ -78,26 +75,26 @@ st.markdown(
   .card-header {
       background:#0F243D;
       color:#ffffff;
-      padding:16px 26px;
+      padding:14px 22px;
       font-weight:700;
       letter-spacing:.2px;
-      font-size:1.1rem;
+      font-size:1.05rem;
   }
   .card-body {
-      padding:18px 24px 18px 24px;
+      padding:14px 20px 16px 20px;
       background:#F9FAFB;
   }
 
   .sec-title {
       color:#10233D;
       font-weight:700;
-      margin:6px 0 4px;
-      font-size:0.96rem;
+      margin:4px 0 3px;
+      font-size:0.95rem;
   }
   .subtle {
       color:#6B7280;
       font-size:0.8rem;
-      margin-top:2px;
+      margin-top:1px;
   }
 
   .stFileUploader > div {
@@ -114,6 +111,12 @@ st.markdown(
 
   .stNumberInput input, .stDateInput input {
       border-radius:10px !important;
+  }
+
+  /* Make <hr> a bit tighter */
+  .card-body hr {
+      margin:10px 0;
+      border-color:#E5E7EB;
   }
 
   /* Orange Get Readi button */
@@ -143,7 +146,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT: 50 / 50 ----------------
+# ---------------- LAYOUT: ~50 / 50 ----------------
 banner_col, form_col = st.columns([1, 1], gap="large")
 
 with banner_col:
@@ -166,7 +169,7 @@ with form_col:
         st.markdown("<div class='subtle'>PDF, DOC, DOCX, TXT</div>", unsafe_allow_html=True)
 
         # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>",
+        st.markdown("<div class='sec-title' style='margin-top:8px;'>Project Requirements</div>",
                     unsafe_allow_html=True)
         proj = st.file_uploader(
             "Drag & drop files here, or browse",
@@ -210,7 +213,7 @@ with form_col:
             end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
 
         # Working days
-        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>",
+        st.markdown("<div class='sec-title' style='margin-top:6px;'>Working days</div>",
                     unsafe_allow_html=True)
         day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         defaults = [True, True, True, True, True, False, False]
@@ -225,7 +228,7 @@ with form_col:
 
         # Maximum hours per day – narrow + centered
         st.markdown(
-            "<div class='sec-title' style='margin-top:12px;'>Maximum work hours per day</div>",
+            "<div class='sec-title' style='margin-top:10px;'>Maximum work hours per day</div>",
             unsafe_allow_html=True,
         )
         mh_left, mh_center, mh_right = st.columns([2, 1, 2])
