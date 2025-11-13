@@ -37,45 +37,35 @@ st.markdown(
       max-width:1200px;
   }
 
-  /* Force the two columns to fill the viewport height */
+  /* Just align the row, don't clamp its height */
   [data-testid="stHorizontalBlock"] {
-      height: calc(100vh - 80px);
-      align-items:stretch;
+      align-items:flex-start;
   }
 
   /* --- LEFT COLUMN (banner) --- */
-  /* Make the first column flex so its content can stretch */
   [data-testid="column"]:first-child {
       display:flex;
       align-items:stretch;
   }
-  /* Make the children of that column also flex */
   [data-testid="column"]:first-child > div {
       flex:1;
       display:flex;
       align-items:center;
       justify-content:center;
   }
-  /* Any image in the first column should scale to fill height */
   [data-testid="column"]:first-child [data-testid="stImage"] img {
-      height:100%;
-      width:auto;
+      width:100%;
+      height:auto;
       object-fit:contain;
   }
 
   /* --- RIGHT COLUMN (form card) --- */
-  /* Use the Streamlit form as the actual card */
   [data-testid="stForm"] {
       background:#FFFFFF !important;
       border-radius:24px !important;
       border:1px solid rgba(16,35,61,.12) !important;
       box-shadow:0 12px 30px rgba(16,35,61,.10) !important;
       padding:0 !important;
-      height:100%;
-      max-height:680px;
-      display:flex;
-      flex-direction:column;
-      overflow:hidden;
   }
   [data-testid="stForm"] > div {
       padding:0 !important;
@@ -92,9 +82,7 @@ st.markdown(
   }
   .card-body {
       padding:18px 24px 18px 24px;
-      background:#FFFFFF;
-      flex:1;
-      overflow-y:auto;
+      background:#F9FAFB;
   }
 
   .sec-title {
@@ -159,7 +147,7 @@ with banner_col:
     st.image("TeamReadi Side Banner.png")
 
 with form_col:
-    # Use the form itself as the card; header + body are just inside
+    # Use the form itself as the card; header + body are inside
     with st.form("generate_form", clear_on_submit=False):
         st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
         st.markdown("<div class='card-body'>", unsafe_allow_html=True)
