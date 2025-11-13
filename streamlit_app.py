@@ -59,18 +59,31 @@ st.markdown(
       background:#F9FAFB;
   }
 
-  /* Make Streamlit's form container transparent so it doesn't look like a second card */
+   /* Make Streamlit's form wrapper completely invisible and non-blocking */
   div.stForm, [data-testid="stForm"] {
       background:transparent !important;
       padding:0 !important;
       margin:0 !important;
-      box-shadow:none !important;
       border:0 !important;
+      box-shadow:none !important;
+
+      border-radius:0 !important;
+      overflow:visible !important;
+      position:relative !important;
+      z-index:0 !important;
+      pointer-events:none !important;   /* wrapper doesn't cover the card */
   }
-  div.stForm > div {
-      padding:0 !important;
+  div.stForm > div,
+  [data-testid="stForm"] > div {
       background:transparent !important;
+      padding:0 !important;
+      margin:0 !important;
+      border:0 !important;
+      box-shadow:none !important;
+
+      pointer-events:auto !important;   /* children (inputs/buttons) still clickable */
   }
+
 
   .sec-title {
       color:#10233D;
