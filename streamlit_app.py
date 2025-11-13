@@ -124,6 +124,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------------- LAYOUT: 1/3 BANNER | 2/3 FORM ----------------
+banner_col, form_col = st.columns([1, 2], gap="large")
 
 with banner_col:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
@@ -224,3 +226,24 @@ with form_col:
             submitted = st.form_submit_button("Get Readi!")
 
         st.markdown("</div>", unsafe_allow_html=True)  # close card-body
+
+# ---------------- HANDLE SUBMIT ----------------
+if submitted:
+    st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
+    st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
+
+    st.session_state.update(
+        {
+            "req_url": req_url or "",
+            "cal_method": cal_mode,
+            "cal_link": cal_url or "",
+            "random_target": randomize_seed,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "workdays": selected_days,
+            "max_hours": float(max_daily),
+            "alpha": SKILL_WEIGHT,
+        }
+    )
+
+    st.switch_page("pages/01_Results.py")
