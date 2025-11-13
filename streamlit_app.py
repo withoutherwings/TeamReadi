@@ -38,17 +38,16 @@ html, body {
     padding-bottom:2rem;
 }
 
-/* ONE card: header + body share same border, radius, shadow */
-.tr-card {
-    background:#F8F9FC;                   /* grey only inside the form */
-    border-radius:18px;
-    border:1px solid rgba(16,35,61,.08);
-    box-shadow:0 10px 28px rgba(16,35,61,.10);
-    overflow:hidden;                      /* rounds header + body together */
-    margin-top:0;
+/* Streamlit adds bottom margin to every markdown block; kill it so the
+   navy header can sit flush on top of the card below. */
+[data-testid="stMarkdown"] {
+    margin-bottom:0 !important;
 }
 
-/* Dark navy bar at the top of that card */
+/* Card itself (the white rounded panel) is native Streamlit;
+   we just style our header bar and inner body. */
+
+/* Dark navy bar at the top, with rounded top corners */
 .tr-header {
     background:#10233D;
     color:#fff;
@@ -56,11 +55,18 @@ html, body {
     font-weight:700;
     font-size:1.15rem;
     letter-spacing:.2px;
+    border-radius:18px 18px 0 0;          /* rounded top corners */
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
 }
 
-/* Body just uses card background */
+/* Light gray only inside the form body */
 .tr-body {
+    background:#F8F9FC;
     padding:22px 24px 26px;
+    border-radius:0 0 18px 18px;          /* rounded bottom corners */
+    border:1px solid rgba(16,35,61,.08);
+    border-top:none;
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
 }
 
 .sec-title {
@@ -137,10 +143,11 @@ with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Right: header + form inside one rounded card
+# Right: header + form body
 with right:
-    st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
+    # navy header (its own markdown block, but with no bottom margin now)
     st.markdown("<div class='tr-header'>Generate New Report</div>", unsafe_allow_html=True)
+    # grey card body directly underneath
     st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
 
     # ---------- SINGLE FORM ----------
@@ -209,7 +216,7 @@ with right:
                 workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
-        # --- Maximum work hours per day (LEFT-JUSTIFIED like other fields) ---
+        # --- Maximum work hours per day (left-justified, one line) ---
         st.markdown(
             "<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>",
             unsafe_allow_html=True,
@@ -229,8 +236,8 @@ with right:
         with g2:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    # close body div
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if "submitted" in locals() and submitted:
@@ -255,4 +262,3 @@ if "submitted" in locals() and submitted:
         }
     )
     st.switch_page("pages/01_Results.py")
-
