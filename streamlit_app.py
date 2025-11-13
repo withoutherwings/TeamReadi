@@ -1,4 +1,4 @@
-# app.py — TeamReadi Landing (stable, compact layout)
+# app.py — TeamReadi Landing (scaled form so it fits)
 
 import os, json, base64, datetime as dt
 import streamlit as st
@@ -37,7 +37,7 @@ st.markdown(
       max-width:1200px;
   }
 
-  /* Let the row behave normally; just align items nicely */
+  /* Row: normal behavior, aligned at top */
   [data-testid="stHorizontalBlock"] {
       align-items:flex-start;
   }
@@ -60,6 +60,23 @@ st.markdown(
   }
 
   /* --- RIGHT COLUMN (form card) --- */
+  /* Shell that we scale based on viewport height */
+  .form-shell {
+      width:100%;
+      transform-origin: top left;
+  }
+  @media (max-height: 900px) {
+      .form-shell {
+          transform: scale(0.9);
+      }
+  }
+  @media (max-height: 800px) {
+      .form-shell {
+          transform: scale(0.8);
+      }
+  }
+
+  /* Card look lives on the stForm */
   [data-testid="stForm"] {
       background:#FFFFFF !important;
       border-radius:24px !important;
@@ -113,12 +130,6 @@ st.markdown(
       border-radius:10px !important;
   }
 
-  /* Make <hr> a bit tighter */
-  .card-body hr {
-      margin:10px 0;
-      border-color:#E5E7EB;
-  }
-
   /* Orange Get Readi button */
   button[kind="formSubmit"],
   [data-testid="baseButton-primaryFormSubmit"],
@@ -153,7 +164,9 @@ with banner_col:
     st.image("TeamReadi Side Banner.png")
 
 with form_col:
-    # Use the form itself as the card; header + body are inside
+    # Wrap the form in a shell that we scale with CSS media queries
+    st.markdown("<div class='form-shell'>", unsafe_allow_html=True)
+
     with st.form("generate_form", clear_on_submit=False):
         st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
         st.markdown("<div class='card-body'>", unsafe_allow_html=True)
@@ -247,8 +260,9 @@ with form_col:
         with cta_mid:
             submitted = st.form_submit_button("Get Readi!")
 
-        # close card-body div
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)  # close card-body
+
+    st.markdown("</div>", unsafe_allow_html=True)  # close form-shell
 
 # ---------------- HANDLE SUBMIT ----------------
 if "submitted" in locals() and submitted:
