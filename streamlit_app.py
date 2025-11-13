@@ -38,34 +38,38 @@ html, body {
     padding-bottom:2rem;
 }
 
-/* ONE card: header + body share same rounded border & shadow */
+/* Outer card that holds the whole form */
 .tr-card {
-    background:#FFFFFF;                       /* outer card white */
+    background:#FFFFFF;
     border-radius:18px;
     border:1px solid rgba(16,35,61,.08);
     box-shadow:0 10px 28px rgba(16,35,61,.10);
-    overflow:hidden;                          /* rounds header and body together */
+    overflow:hidden; /* ensures children respect rounded corners */
 }
 
-/* Dark navy bar at the very top of that card */
-.tr-header {
-    background:#10233D;
-    color:#fff;
-    padding:18px 26px;
-    font-weight:700;
-    font-size:1.15rem;
-    letter-spacing:.2px;
-}
-
-/* Light gray body area inside that same card */
+/* Light gray body area inside that card */
 .tr-body {
     background:#F8F9FC;
     padding:22px 24px 26px;
 }
 
-/* KILL Streamlit's default form "card" so it doesn't create a second bubble */
+/* Embedded main title INSIDE the form card */
+.tr-main-title {
+    display:inline-block;
+    background:#10233D;
+    color:#ffffff;
+    padding:10px 18px;
+    border-radius:12px;
+    font-weight:800;
+    font-size:1.1rem;
+    margin-bottom:16px;
+}
+
+/* Make the Streamlit form itself transparent so we only see our card */
 form[data-testid="stForm"] {
     background:transparent !important;
+    border:none !important;
+    box-shadow:none !important;
 }
 form[data-testid="stForm"] > div {
     background:transparent !important;
@@ -149,11 +153,12 @@ with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Right: one card containing header + body
+# Right: one card containing embedded title + body
 with right:
-    st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='tr-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
+    st.markdown("<div class='tr-card'><div class='tr-body'>", unsafe_allow_html=True)
+
+    # Embedded title at the very top of the card
+    st.markdown("<div class='tr-main-title'>Generate New Report</div>", unsafe_allow_html=True)
 
     # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
@@ -167,103 +172,4 @@ with right:
         )
         st.caption("PDF, DOC, DOCX, TXT")
 
-        # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>", unsafe_allow_html=True)
-        proj = st.file_uploader(
-            "Drag & drop files here, or browse",
-            type=["pdf", "doc", "docx", "txt", "md"],
-            accept_multiple_files=True,
-            key="proj",
-            label_visibility="collapsed",
-        )
-        req_url = st.text_input("Or paste job / RFP URL")
-
-        st.markdown("---")
-
-        # --- Import Calendar ---
-        st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
-        cal_mode = st.radio(
-            "Calendar import mode",
-            options=["Calendar link", "Randomize hours (demo mode)"],
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-
-        cal_url = ""
-        randomize_seed = None
-
-        if cal_mode == "Calendar link":
-            cal_url = st.text_input(
-                "Paste a public/shared calendar URL (Google, Outlook, etc.)",
-                placeholder="https://calendar.google.com/calendar/ical/…",
-                help="Must be publicly available.",
-            )
-        else:
-            randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
-
-        st.markdown("---")
-
-        # --- Availability Parameters ---
-        st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            start_date = st.date_input("Start date", value=dt.date.today())
-        with c2:
-            end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
-
-        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
-        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        defaults = [True, True, True, True, True, False, False]
-        dcols = st.columns(7)
-        workdays_checks = []
-        for i, col in enumerate(dcols):
-            with col:
-                workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
-        selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
-
-        # --- Maximum work hours per day (left-justified, one line) ---
-        st.markdown(
-            "<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>",
-            unsafe_allow_html=True,
-        )
-        max_daily = st.number_input(
-            "",
-            min_value=1.0,
-            max_value=12.0,
-            value=8.0,
-            step=1.0,
-            help=None,
-            label_visibility="collapsed",
-        )
-
-        # --- Centered orange Get Readi! button under the 8.00 box ---
-        g1, g2, g3 = st.columns([1, 2, 1])
-        with g2:
-            submitted = st.form_submit_button("Get Readi!")
-
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-# ---------------- HANDLE SUBMIT ----------------
-if "submitted" in locals() and submitted:
-    # Save inputs to session for the Results page
-    st.session_state["resumes"] = [
-        {"name": f.name, "data": f.getvalue()} for f in (resumes or [])
-    ]
-    st.session_state["req_files"] = [
-        {"name": f.name, "data": f.getvalue()} for f in (proj or [])
-    ]
-    st.session_state.update(
-        {
-            "req_url": req_url or "",
-            "cal_method": cal_mode,
-            "cal_link": cal_url or "",
-            "random_target": randomize_seed,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "workdays": selected_days,
-            "max_hours": float(max_daily),
-            "alpha": SKILL_WEIGHT,
-        }
-    )
-    st.switch_page("pages/01_Results.py")
+        # --- Project R
