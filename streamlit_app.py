@@ -1,4 +1,4 @@
-# app.py — TeamReadi Landing (collects inputs, then routes to Results)
+# app.py — TeamReadi Landing (collects inputs, then routes to Results) 
 import os, json, base64, datetime as dt
 import streamlit as st
 from openai import OpenAI
@@ -63,18 +63,18 @@ div[data-testid="stVerticalBlock"] > div {
     font-weight:700;
     font-size:1.15rem;
     letter-spacing:.2px;
-    border-radius:18px;
+    border-radius:18px 18px 0 0;  /* top rounded only */
     display:block;
     width:100%;
     box-shadow:0 10px 28px rgba(16,35,61,.10);
-    margin-bottom:10px;  /* a bit tighter now */
+    margin-bottom:0;  /* connect directly to form panel */
 }
 
 /* Light gray panel behind the form content */
 .tr-body {
     background:#F8F9FC;
     padding:22px 24px 26px;
-    border-radius:18px;
+    border-radius:0 0 18px 18px;   /* bottom rounded only, attaches to header */
     border:1px solid rgba(16,35,61,.08);
     box-shadow:0 10px 28px rgba(16,35,61,.10);
 }
