@@ -36,22 +36,20 @@ st.markdown(
 <style>
   /* Page background + main container */
   .main { background:#ffffff; }
-  .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1200px; }
+  .block-container {
+      padding-top:1.2rem;
+      padding-bottom:2rem;
+      max-width:1200px;
+  }
 
-  /* Card shell */
+  /* Card shell: header + body in ONE card */
   .card {
-      background:#F9FAFB;
+      background:#FFFFFF;
       border-radius:24px;
-      border:1px solid rgba(16,35,61,.10);
+      border:1px solid rgba(16,35,61,.12);
       box-shadow:0 12px 30px rgba(16,35,61,.10);
       overflow:hidden;
   }
-  .card-inner {
-      background:#FFFFFF;
-      border-radius:0 0 24px 24px;
-      border-top:1px solid rgba(16,35,61,.06);
-  }
-
   .card-header {
       background:#0F243D;
       color:#ffffff;
@@ -62,7 +60,9 @@ st.markdown(
       border-radius:24px 24px 0 0;  /* rounded top corners */
   }
   .card-body {
-      padding:18px 26px 22px 26px;  /* slightly tighter to reduce height */
+      padding:20px 26px 22px 26px;
+      border-radius:0 0 24px 24px;
+      background:#F9FAFB;
   }
 
   .sec-title {
@@ -96,11 +96,6 @@ st.markdown(
       border-radius:10px !important;
   }
 
-  /* Workday checkboxes */
-  .day-chip span {
-      font-size:0.9rem;
-  }
-
   /* Orange submit button inside form */
   div.stForm button[kind="formSubmit"],
   div.stForm [data-testid="baseButton-primaryFormSubmit"],
@@ -122,12 +117,6 @@ st.markdown(
       background:#F27B00 !important;
   }
 
-  /* Center the CTA column itself */
-  .cta-row > div {
-      display:flex;
-      justify-content:center;
-  }
-
   header[data-testid="stHeader"] { background:transparent; }
 </style>
 """,
@@ -141,10 +130,10 @@ with banner_col:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
 
 with form_col:
-    # Outer card wrapper with header attached
+    # ONE unified card: header + body
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-inner'><div class='card-body'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
 
     # ---------------- FORM ----------------
     with st.form("generate_form", clear_on_submit=False):
@@ -209,8 +198,9 @@ with form_col:
         workdays_checks = []
         for i, col in enumerate(dcols):
             with col:
-                checked = st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}")
-                workdays_checks.append(checked)
+                workdays_checks.append(
+                    st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}")
+                )
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
         # Maximum hours per day – narrow + centered
@@ -218,17 +208,21 @@ with form_col:
         mh_left, mh_center, mh_right = st.columns([2, 1, 2])
         with mh_center:
             max_daily = st.number_input(
-                "", min_value=1.0, max_value=12.0, value=8.0, step=1.0,
+                "",
+                min_value=1.0,
+                max_value=12.0,
+                value=8.0,
+                step=1.0,
                 label_visibility="collapsed",
             )
 
-        # Centered orange CTA
-        cta_left, cta_mid, cta_right = st.columns([2, 1, 2], gap="small")
+        # Centered orange CTA directly under the number input
+        cta_left, cta_mid, cta_right = st.columns([2, 1, 2])
         with cta_mid:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close inner/body divs
-    st.markdown("</div></div></div>", unsafe_allow_html=True)
+    # close body + card
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if submitted:
@@ -248,6 +242,8 @@ if submitted:
             "alpha": SKILL_WEIGHT,
         }
     )
+
+    st.switch_page("pages/01_Results.py")
 
     # If you have pages/01_Results.py this will navigate there
     st.switch_page("pages/01_Results.py")
