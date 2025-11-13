@@ -294,3 +294,4 @@ Respond as JSON with:
 
     except Exception:
         return _fallback_resume_score(requirements, resume_text)
+
