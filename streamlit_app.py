@@ -36,14 +36,21 @@ st.markdown(
       max-width:1200px;
   }
 
-  /* Card shell: header + body in ONE card */
-  .card {
-      background:#FFFFFF;
-      border-radius:24px;
-      border:1px solid rgba(16,35,61,.12);
-      box-shadow:0 12px 30px rgba(16,35,61,.10);
-      overflow:hidden;  /* ensures rounded edges apply to everything inside */
+  /* Make the Streamlit form itself the card */
+  [data-testid="stForm"] {
+      background:#FFFFFF !important;
+      border-radius:24px !important;
+      border:1px solid rgba(16,35,61,.18) !important;  /* stronger border */
+      box-shadow:0 12px 30px rgba(16,35,61,.10) !important;
+      padding:0 !important;
+      margin:0 !important;
   }
+  [data-testid="stForm"] > div {
+      padding:0 !important;
+      margin:0 !important;
+      background:transparent !important;
+  }
+
   .card-header {
       background:#0F243D;
       color:#ffffff;
@@ -51,39 +58,13 @@ st.markdown(
       font-weight:700;
       letter-spacing:.2px;
       font-size:1.15rem;
-      border-radius:24px 24px 0 0;  /* rounded top corners */
+      border-radius:24px 24px 0 0;
   }
   .card-body {
       padding:20px 26px 22px 26px;
-      border-radius:0 0 24px 24px;   /* rounded bottom corners */
+      border-radius:0 0 24px 24px;
       background:#F9FAFB;
   }
-
-   /* Make Streamlit's form wrapper completely invisible and non-blocking */
-  div.stForm, [data-testid="stForm"] {
-      background:transparent !important;
-      padding:0 !important;
-      margin:0 !important;
-      border:0 !important;
-      box-shadow:none !important;
-
-      border-radius:0 !important;
-      overflow:visible !important;
-      position:relative !important;
-      z-index:0 !important;
-      pointer-events:none !important;   /* wrapper doesn't cover the card */
-  }
-  div.stForm > div,
-  [data-testid="stForm"] > div {
-      background:transparent !important;
-      padding:0 !important;
-      margin:0 !important;
-      border:0 !important;
-      box-shadow:none !important;
-
-      pointer-events:auto !important;   /* children (inputs/buttons) still clickable */
-  }
-
 
   .sec-title {
       color:#10233D;
@@ -143,20 +124,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT: 1/3 BANNER | 2/3 FORM ----------------
-banner_col, form_col = st.columns([1, 2], gap="large")
 
 with banner_col:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
 
 with form_col:
-    # ONE unified card: header + body
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
-
-    # ---------------- FORM ----------------
+    # The form itself is the card; header + body live inside
     with st.form("generate_form", clear_on_submit=False):
+        st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-body'>", unsafe_allow_html=True)
+
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
         resumes = st.file_uploader(
@@ -246,26 +223,4 @@ with form_col:
         with cta_mid:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-# ---------------- HANDLE SUBMIT ----------------
-if submitted:
-    st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
-    st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
-
-    st.session_state.update(
-        {
-            "req_url": req_url or "",
-            "cal_method": cal_mode,
-            "cal_link": cal_url or "",
-            "random_target": randomize_seed,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "workdays": selected_days,
-            "max_hours": float(max_daily),
-            "alpha": SKILL_WEIGHT,
-        }
-    )
-
-    st.switch_page("pages/01_Results.py")
+        st.markdown("</div>", unsafe_allow_html=True)  # close card-body
