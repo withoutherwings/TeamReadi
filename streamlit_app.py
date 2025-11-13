@@ -31,6 +31,23 @@ html, body {
     background:#ffffff !important;
 }
 
+/* REMOVE THE WHITE BUBBLE CREATED BY STREAMLIT COLUMNS */
+div[data-testid="stVerticalBlock"] {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+div[data-testid="stVerticalBlock"] > div {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+
 /* Center content and keep width similar to your mockup */
 .block-container {
     max-width:1100px !important;
