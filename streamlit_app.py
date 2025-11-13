@@ -34,89 +34,119 @@ from openai import OpenAI
 st.markdown(
     """
 <style>
-  /* Page */
+  /* Page background + main container */
   .main { background:#ffffff; }
   .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1200px; }
 
-  /* Card around the whole form */
-  .tr-card {
-      background:#FFFFFF;
-      border-radius:18px;
+  /* Card shell */
+  .card {
+      background:#F9FAFB;
+      border-radius:24px;
+      border:1px solid rgba(16,35,61,.10);
+      box-shadow:0 12px 30px rgba(16,35,61,.10);
       overflow:hidden;
-      border:1px solid rgba(16,35,61,.08);
-      box-shadow:0 10px 28px rgba(16,35,61,.10);
   }
-  .tr-header {
-      background:#10233D;
-      color:#fff;
-      padding:18px 26px;
+  .card-inner {
+      background:#FFFFFF;
+      border-radius:0 0 24px 24px;
+      border-top:1px solid rgba(16,35,61,.06);
+  }
+
+  .card-header {
+      background:#0F243D;
+      color:#ffffff;
+      padding:18px 28px;
       font-weight:700;
-      font-size:1.15rem;
       letter-spacing:.2px;
-      border-radius:18px 18px 0 0;
+      font-size:1.15rem;
+      border-radius:24px 24px 0 0;  /* rounded top corners */
   }
-  .tr-body {
-      padding:22px 24px 26px;
-      border-radius:0 0 18px 18px;
+  .card-body {
+      padding:18px 26px 22px 26px;  /* slightly tighter to reduce height */
   }
 
   .sec-title {
       color:#10233D;
       font-weight:700;
-      margin:8px 0 6px;
-      font-size:1.0rem;
+      margin:10px 0 6px;
+      font-size:0.98rem;
+  }
+  .subtle {
+      color:#6B7280;
+      font-size:0.8rem;
+      margin-top:2px;
   }
 
-  /* Make uploaders look like cards */
+  /* Uploaders */
   .stFileUploader > div {
-      border:1px dashed rgba(16,35,61,.25)!important;
-      border-radius:12px;
+      border-radius:18px !important;
+      border:1px dashed rgba(16,35,61,.25) !important;
+      background:#FFFFFF !important;
   }
 
-  /* Text & number inputs */
-  .stTextInput input, .stNumberInput input {
-      border-radius:12px !important;
+  /* Text inputs (URLs etc.) always visible */
+  .stTextInput > div > input {
+      border-radius:10px !important;
+      border:1px solid rgba(16,35,61,.25) !important;
+      background:#FFFFFF !important;
   }
 
-  /* Orange form submit button, centered */
+  /* Number + date inputs */
+  .stNumberInput input, .stDateInput input {
+      border-radius:10px !important;
+  }
+
+  /* Workday checkboxes */
+  .day-chip span {
+      font-size:0.9rem;
+  }
+
+  /* Orange submit button inside form */
   div.stForm button[kind="formSubmit"],
-  div.stForm [data-testid="baseButton-primaryFormSubmit"] {
-      min-width:160px;
-      padding:10px 20px;
+  div.stForm [data-testid="baseButton-primaryFormSubmit"],
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
+      width:100%;
+      max-width:190px;
+      padding:12px 16px;
       border-radius:10px;
       border:0 !important;
       background:#FF8A1E !important;
       color:#ffffff !important;
       font-weight:800;
       letter-spacing:.2px;
-      box-shadow:0 2px 0 rgba(0,0,0,.06);
+      box-shadow:0 4px 10px rgba(255,138,30,.35);
   }
   div.stForm button[kind="formSubmit"]:hover,
-  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover {
+  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
+  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
       background:#F27B00 !important;
   }
 
-  /* Remove default app header tint */
+  /* Center the CTA column itself */
+  .cta-row > div {
+      display:flex;
+      justify-content:center;
+  }
+
   header[data-testid="stHeader"] { background:transparent; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT: 1/3 banner, 2/3 form ----------------
-left, right = st.columns([1, 2], gap="large")
+# ---------------- LAYOUT: 1/3 BANNER | 2/3 FORM ----------------
+banner_col, form_col = st.columns([1, 2], gap="large")
 
-# Left: banner
-with left:
+with banner_col:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
 
-# Right: header + form inside one rounded card
-with right:
-    st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='tr-header'>Generate New Report</div>", unsafe_allow_html=True)
-    st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
+with form_col:
+    # Outer card wrapper with header attached
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-inner'><div class='card-body'>", unsafe_allow_html=True)
 
-    # ---------- SINGLE FORM ----------
+    # ---------------- FORM ----------------
     with st.form("generate_form", clear_on_submit=False):
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
@@ -126,10 +156,10 @@ with right:
             accept_multiple_files=True,
             label_visibility="collapsed",
         )
-        st.caption("PDF, DOC, DOCX, TXT")
+        st.markdown("<div class='subtle'>PDF, DOC, DOCX, TXT</div>", unsafe_allow_html=True)
 
         # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sec-title' style='margin-top:14px;'>Project Requirements</div>", unsafe_allow_html=True)
         proj = st.file_uploader(
             "Drag & drop files here, or browse",
             type=["pdf", "doc", "docx", "txt", "md"],
@@ -137,9 +167,9 @@ with right:
             key="proj",
             label_visibility="collapsed",
         )
-        req_url = st.text_input("Or paste job / RFP URL")
+        req_url = st.text_input("Or paste job / RFP URL", placeholder="https://...")
 
-        st.markdown("---")
+        st.markdown("<hr />", unsafe_allow_html=True)
 
         # --- Import Calendar ---
         st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
@@ -157,12 +187,11 @@ with right:
             cal_url = st.text_input(
                 "Paste a public/shared calendar URL (Google, Outlook, etc.)",
                 placeholder="https://calendar.google.com/calendar/ical/…",
-                help="Must be publicly available.",
             )
         else:
             randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
 
-        st.markdown("---")
+        st.markdown("<hr />", unsafe_allow_html=True)
 
         # --- Availability Parameters ---
         st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
@@ -172,49 +201,40 @@ with right:
         with c2:
             end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
 
-        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
+        # Working days
+        st.markdown("<div class='sec-title' style='margin-top:10px;'>Working days</div>", unsafe_allow_html=True)
         day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         defaults = [True, True, True, True, True, False, False]
         dcols = st.columns(7)
         workdays_checks = []
         for i, col in enumerate(dcols):
             with col:
-                workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
+                checked = st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}")
+                workdays_checks.append(checked)
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
-        # --- Maximum work hours per day (label + centered input) ---
-        mid1, mid2, mid3 = st.columns([1, 2, 1])
-        with mid2:
-            st.markdown(
-                "<div class='sec-title' style='margin-top:8px;'>Maximum work hours per day</div>",
-                unsafe_allow_html=True,
-            )
+        # Maximum hours per day – narrow + centered
+        st.markdown("<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>", unsafe_allow_html=True)
+        mh_left, mh_center, mh_right = st.columns([2, 1, 2])
+        with mh_center:
             max_daily = st.number_input(
-                "",
-                min_value=1.0,
-                max_value=12.0,
-                value=8.0,
-                step=1.0,
-                help=None,
+                "", min_value=1.0, max_value=12.0, value=8.0, step=1.0,
+                label_visibility="collapsed",
             )
 
-        # --- Centered orange Get Readi! button under the 8.00 box ---
-        g1, g2, g3 = st.columns([1, 2, 1])
-        with g2:
+        # Centered orange CTA
+        cta_left, cta_mid, cta_right = st.columns([2, 1, 2], gap="small")
+        with cta_mid:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close body + card
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    # close inner/body divs
+    st.markdown("</div></div></div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if submitted:
-    # Save inputs to session for the Results page
-    st.session_state["resumes"] = [
-        {"name": f.name, "data": f.getvalue()} for f in (resumes or [])
-    ]
-    st.session_state["req_files"] = [
-        {"name": f.name, "data": f.getvalue()} for f in (proj or [])
-    ]
+    st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
+    st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
+
     st.session_state.update(
         {
             "req_url": req_url or "",
@@ -228,4 +248,6 @@ if submitted:
             "alpha": SKILL_WEIGHT,
         }
     )
+
+    # If you have pages/01_Results.py this will navigate there
     st.switch_page("pages/01_Results.py")
