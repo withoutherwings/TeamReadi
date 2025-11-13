@@ -10,15 +10,16 @@ import pandas as pd
 import fitz                    # PyMuPDF
 from docx import Document
 
+# --- ensure project root is on sys.path so "backend" is importable from /pages ---
+import sys
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
 # Backend
 from backend.pipeline import run_teamreadi_pipeline
 from backend.calendar_backend import llm_explain_employee
-
-# PDF generation
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
 
 # ---------- UI shell ----------
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
@@ -28,7 +29,6 @@ st.title("TeamReadi — Ranked Results")
 st.markdown(
     """
 <style>
-/* Overall page background stays white */
 html, body, .stApp, [data-testid="stAppViewContainer"], .main {
   background-color: #ffffff !important;
 }
@@ -46,7 +46,7 @@ html, body, .stApp, [data-testid="stAppViewContainer"], .main {
 
 /* Top name bar (employee ID) */
 .tr-card-header {
-  color: #FFB020;  /* bright orange-yellow for name */
+  color: #FFB020;
   font-weight: 800;
   letter-spacing: 0.8px;
   font-size: 1.0rem;
@@ -70,7 +70,7 @@ html, body, .stApp, [data-testid="stAppViewContainer"], .main {
 .tr-score-value {
   font-size: 1.9rem;
   font-weight: 800;
-  color: #FF8A1E;   /* main orange */
+  color: #FF8A1E;
   line-height: 1.0;
 }
 
@@ -156,7 +156,27 @@ def read_text_from_url(url: str) -> str:
 def filename_stem(fname: str) -> str:
     return re.sub(r"\.[^.]+$", "", fname or "").strip()
 
+def canonical_emp_id_from_name(name: str) -> str:
+    """
+    Normalize anything like:
+      'Employee 1', 'employee_01', 'EMPLOYEE-001', 'John Doe - employee 7'
+    to a canonical 'Employee_007'.
+
+    If we don't find an 'employee + number' pattern, we fall back to the stem.
+    """
+    stem = filename_stem(name)
+    m = re.search(r"employee[\s_\-]*([0-9]+)", stem, re.IGNORECASE)
+    if m:
+        n = int(m.group(1))
+        return f"Employee_{n:03d}"
+    return stem
+
 # ---------- PDF report ----------
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.platypus import Table, TableStyle
+
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     """
     Build a multi-page PDF:
@@ -226,9 +246,9 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         # Highlights text
         highlights = r.get("highlights", [])
         highlight_lines = []
-        for h in highlights[:8]:
-            prefix = "✓ " if h.get("met") else "× "
-            highlight_lines.append(prefix + (h.get("skill") or ""))
+        for hlt in highlights[:8]:
+            prefix = "✓ " if hlt.get("met") else "× "
+            highlight_lines.append(prefix + (hlt.get("skill") or ""))
 
         y = h - margin
         line(f"{i}. {emp_id}", dy=20, size=15, bold=True)
@@ -260,7 +280,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 with st.spinner("Analyzing resumes, project requirements, and calendar…"):
     ss = st.session_state
 
-    # Guard: ensure we came from the landing page
     if "resumes" not in ss or not ss["resumes"]:
         st.error("No resumes found. Please return to the start page and upload resumes.")
         st.stop()
@@ -278,18 +297,17 @@ with st.spinner("Analyzing resumes, project requirements, and calendar…"):
     req_url      = ss.get("req_url", "")
     cal_method   = ss.get("cal_method", "Calendar link")
     cal_link     = ss.get("cal_link", "")
-    random_seed  = ss.get("random_target", None)
     start_date   = dt.date.fromisoformat(ss.get("start_date", str(dt.date.today())))
     end_date     = dt.date.fromisoformat(ss.get("end_date", str(dt.date.today() + dt.timedelta(days=30))))
     workdays_l   = ss.get("workdays", ["Mon", "Tue", "Wed", "Thu", "Fri"])
     max_hours    = float(ss.get("max_hours", 8.0))
-    alpha        = float(ss.get("alpha", 0.7))  # kept for PDF, but pipeline uses its own SKILL_WEIGHT
+    alpha        = float(ss.get("alpha", 0.7))  # used only for PDF context
 
     # Map workday labels -> weekday ints
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days = {wd_map[d] for d in workdays_l if d in wd_map}
     if not working_days:
-        working_days = {0, 1, 2, 3, 4}  # default Mon–Fri
+        working_days = {0, 1, 2, 3, 4}
 
     # Build project text from uploaded files + optional URL
     job_parts = []
@@ -307,7 +325,7 @@ with st.spinner("Analyzing resumes, project requirements, and calendar…"):
     resumes_dict: Dict[str, str] = {}
     for up in resumes_raw:
         resume_text = extract_text_from_any(up)
-        emp_id = filename_stem(up.name)  # e.g., 'Employee_001'
+        emp_id = canonical_emp_id_from_name(up.name)   # robust Employee_### id
         if emp_id:
             resumes_dict[emp_id] = resume_text
 
@@ -322,7 +340,7 @@ with st.spinner("Analyzing resumes, project requirements, and calendar…"):
             st.stop()
         calendar_url = cal_link.strip()
     else:
-        # For now, only calendar link is supported in the new backend
+        # For now we keep demo mode disabled until we wire a proper random-hours branch
         st.error("Randomize hours (demo mode) is not implemented yet. Please use 'Calendar link'.")
         st.stop()
 
@@ -350,7 +368,7 @@ for row in ranked_rows:
         }
     )
 
-# Safety: ensure sorted by ReadiScore descending
+# Ensure sorted
 results = sorted(results, key=lambda r: r["metrics"]["readiscore"], reverse=True)
 
 if not results:
@@ -360,7 +378,7 @@ if not results:
 # ---------- Render ranked tiles ----------
 st.markdown("### Ranked Candidates")
 
-tiles_per_row = 4  # around 4–5 tiles per row; 4 is usually safer for width
+tiles_per_row = 4  # about 4 tiles per row
 
 for idx, r in enumerate(results):
     if idx % tiles_per_row == 0:
@@ -372,15 +390,15 @@ for idx, r in enumerate(results):
     score = f"{m['readiscore']:.0f}%"
     skill_pct = f"{m['skill_match_pct']:.0f}%"
     hrs = f"{m['availability_hours']:.0f}"
-    highlights = r["highlights"][:6]  # show up to 6 highlights on the tile
+    highlights = r["highlights"][:6]  # show up to 6 highlights
 
     # Build highlights HTML
     hl_items = []
-    for h in highlights:
-        met = h.get("met")
+    for hlt in highlights:
+        met = hlt.get("met")
         icon = "✅" if met else "❌"
         color = "#57D163" if met else "#FF6B6B"
-        text = html.escape(h.get("skill", "") or "")
+        text = html.escape(hlt.get("skill", "") or "")
         hl_items.append(
             f'<li><span class="icon" style="color:{color};">{icon}</span>{text}</li>'
         )
@@ -439,9 +457,7 @@ def _reset_and_return():
     ):
         if k in st.session_state:
             del st.session_state[k]
-    # Main app file name — adjust if yours is different
-    st.switch_page("streamlit_app.py")
+    st.switch_page("app.py")
 
 with c2:
     st.button("Return to Start", on_click=_reset_and_return, use_container_width=True)
-
