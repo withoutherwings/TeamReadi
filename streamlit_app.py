@@ -50,7 +50,7 @@ html, body {
     display:block;
     width:100%;
     box-shadow:0 10px 28px rgba(16,35,61,.10);
-    margin-bottom:18px;
+    margin-bottom:10px;  /* a bit tighter now */
 }
 
 /* Light gray panel behind the form content */
@@ -60,6 +60,42 @@ html, body {
     border-radius:18px;
     border:1px solid rgba(16,35,61,.08);
     box-shadow:0 10px 28px rgba(16,35,61,.10);
+}
+
+/* 🔥 REMOVE ALL WHITE BUBBLES AROUND STREAMLIT FORMS 🔥 */
+form[data-testid="stForm"] {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Inner wrapper inside the form */
+form[data-testid="stForm"] > div {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Outer container Streamlit adds above/below the form */
+div[data-testid="stFormContainer"] {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Block wrapper Streamlit uses around components */
+section[data-testid="stBlock"] {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
 /* Section titles */
