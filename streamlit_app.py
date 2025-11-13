@@ -37,9 +37,11 @@ st.markdown(
       max-width:1200px;
   }
 
-  /* Just align the row, don't clamp its height */
+  /* Row behaves like a flex row that fills (at least) the viewport height */
   [data-testid="stHorizontalBlock"] {
-      align-items:flex-start;
+      display:flex;
+      align-items:stretch;
+      min-height: calc(100vh - 80px);
   }
 
   /* --- LEFT COLUMN (banner) --- */
@@ -53,9 +55,10 @@ st.markdown(
       align-items:center;
       justify-content:center;
   }
+  /* Banner image scales to fill column height */
   [data-testid="column"]:first-child [data-testid="stImage"] img {
-      width:100%;
-      height:auto;
+      height:100%;
+      width:auto;
       object-fit:contain;
   }
 
