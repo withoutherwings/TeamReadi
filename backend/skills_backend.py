@@ -15,8 +15,29 @@ from typing import List, Dict, Any
 
 from openai import OpenAI
 
-# Create client once
-API_KEY = os.getenv("OPENAI_API_KEY")
+# =========================
+# OpenAI client setup
+# =========================
+
+def _get_api_key() -> str | None:
+    """
+    Try to pull OPENAI_API_KEY from Streamlit secrets first, then env vars.
+    This matches how app.py is configured.
+    """
+    # Streamlit may not be available when running tests, so guard import.
+    try:
+        import streamlit as st  # type: ignore
+        key = st.secrets.get("OPENAI_API_KEY")
+        if key:
+            return key
+    except Exception:
+        pass
+
+    # Fallback: plain environment variable
+    return os.getenv("OPENAI_API_KEY")
+
+
+API_KEY = _get_api_key()
 client = OpenAI(api_key=API_KEY) if API_KEY else None
 
 
@@ -145,13 +166,15 @@ Respond as JSON with a single key "requirements" whose value is a list of object
 
     try:
         resp = client.responses.create(
-            model="gpt-4.1-mini",
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
             input=[
                 {
                     "role": "system",
-                    "content": "You extract staffing requirements from construction RFPs. "
-                               "Always respond with valid JSON: "
-                               "{\"requirements\": [...]} and nothing else.",
+                    "content": (
+                        "You extract staffing requirements from construction RFPs. "
+                        "Always respond with valid JSON: "
+                        "{\"requirements\": [...]} and nothing else."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -244,7 +267,7 @@ Respond as JSON with:
 
     try:
         resp = client.responses.create(
-            model="gpt-4.1-mini",
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
             input=[
                 {
                     "role": "system",
