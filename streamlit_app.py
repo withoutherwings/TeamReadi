@@ -4,6 +4,10 @@ import os, json, base64, datetime as dt
 import streamlit as st
 from openai import OpenAI
 
+# TeamReadi backend imports
+from backend.pipeline import run_teamreadi_pipeline
+from backend.calendar_backend import llm_explain_employee
+
 # ---------------- UI SETUP ----------------
 st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
 
