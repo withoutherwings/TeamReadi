@@ -55,7 +55,16 @@ div[data-testid="stVerticalBlock"] > div {
     padding-bottom:2rem;
 }
 
-/* Full-width navy header bar inside the right column */
+/* 🔵 NEW: wrapper around header + form so they visually connect */
+.tr-card {
+    background:#F8F9FC;
+    border:1px solid rgba(16,35,61,.10);
+    border-radius:18px;
+    padding:0;
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
+}
+
+/* Full-width navy header bar */
 .tr-main-title {
     background:#10233D;
     color:#ffffff;
@@ -63,56 +72,29 @@ div[data-testid="stVerticalBlock"] > div {
     font-weight:700;
     font-size:1.15rem;
     letter-spacing:.2px;
-    border-radius:18px 18px 0 0;  /* top rounded only */
+    border-radius:18px 18px 0 0;
     display:block;
     width:100%;
-    box-shadow:0 10px 28px rgba(16,35,61,.10);
-    margin-bottom:0;  /* connect directly to form panel */
+    margin:0;
 }
 
 /* Light gray panel behind the form content */
 .tr-body {
     background:#F8F9FC;
     padding:22px 24px 26px;
-    border-radius:0 0 18px 18px;   /* bottom rounded only, attaches to header */
-    border:1px solid rgba(16,35,61,.08);
-    box-shadow:0 10px 28px rgba(16,35,61,.10);
+    border-radius:0 0 18px 18px;
 }
 
-/* 🔥 REMOVE ALL WHITE BUBBLES AROUND STREAMLIT FORMS 🔥 */
-form[data-testid="stForm"] {
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* Inner wrapper inside the form */
-form[data-testid="stForm"] > div {
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* Outer container Streamlit adds above/below the form */
-div[data-testid="stFormContainer"] {
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* Block wrapper Streamlit uses around components */
+/* Remove Streamlit form bubble */
+form[data-testid="stForm"],
+form[data-testid="stForm"] > div,
+div[data-testid="stFormContainer"],
 section[data-testid="stBlock"] {
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
+    background:transparent !important;
+    border:none !important;
+    box-shadow:none !important;
+    padding:0 !important;
+    margin:0 !important;
 }
 
 /* Section titles */
@@ -123,54 +105,47 @@ section[data-testid="stBlock"] {
     font-size:1.0rem;
 }
 
-/* Make uploaders look like cards */
+/* Uploaders as dashed cards */
 .stFileUploader > div {
     border:1px dashed rgba(16,35,61,.25)!important;
     border-radius:12px;
 }
 
-/* Text & number inputs: visible white boxes with border */
+/* Inputs styled consistently */
 .stTextInput input,
-.stNumberInput input {
-    border-radius:12px !important;
-    border:1px solid #CDD4E1 !important;
-    background:#ffffff !important;
-}
-
-/* Date inputs: same style so Start/End date boxes are visible */
+.stNumberInput input,
 [data-testid="stDateInput"] input {
     border-radius:12px !important;
     border:1px solid #CDD4E1 !important;
     background:#ffffff !important;
 }
 
-/* Prevent checkbox labels (Mon, Tue, ...) from splitting onto 2 lines */
+/* Keep checkbox labels on one line */
 div[data-testid="stCheckbox"] label {
     white-space:nowrap;
 }
 
-/* Orange form submit button, centered */
+/* Orange submit button */
 div.stForm button[kind="formSubmit"],
 div.stForm [data-testid="baseButton-primaryFormSubmit"] {
     min-width:160px;
     padding:10px 20px;
     border-radius:10px;
-    border:0 !important;
     background:#FF8A1E !important;
     color:#ffffff !important;
     font-weight:800;
     letter-spacing:.2px;
-    box-shadow:0 2px 0 rgba(0,0,0,.06);
+    border:0;
 }
 div.stForm button[kind="formSubmit"]:hover,
 div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover {
     background:#F27B00 !important;
 }
 
-/* Remove default app header tint */
+/* Remove Streamlit header tint */
 header[data-testid="stHeader"] { background:transparent; }
 
-/* Equal treatment for banner column */
+/* Keep banner proportionate */
 .equal-col img {
     width:100%;
     height:auto;
@@ -190,16 +165,21 @@ with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Right: header bar + gray form panel
+# Right: connected title + form card
 with right:
-    # Full-width navy header (no extra bubble above it)
+
+    # 🔵 Start unified card
+    st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
+
+    # Navy header
     st.markdown("<div class='tr-main-title'>Generate New Report</div>", unsafe_allow_html=True)
 
-    # Gray panel containing the actual form
+    # Gray form body
     st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
 
     # ---------- SINGLE FORM ----------
     with st.form("generate_form", clear_on_submit=False):
+
         # --- Upload Resumes ---
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
         resumes = st.file_uploader(
@@ -239,7 +219,6 @@ with right:
             cal_url = st.text_input(
                 "Paste a public/shared calendar URL (Google, Outlook, etc.)",
                 placeholder="https://calendar.google.com/calendar/ical/…",
-                help="Must be publicly available.",
             )
         else:
             randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
@@ -264,7 +243,7 @@ with right:
                 workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
-        # --- Maximum work hours per day (left-justified, one line) ---
+        # --- Maximum work hours per day ---
         st.markdown(
             "<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>",
             unsafe_allow_html=True,
@@ -275,21 +254,20 @@ with right:
             max_value=12.0,
             value=8.0,
             step=1.0,
-            help=None,
             label_visibility="collapsed",
         )
 
-        # --- Centered orange Get Readi! button under the 8.00 box ---
+        # Centered button
         g1, g2, g3 = st.columns([1, 2, 1])
         with g2:
             submitted = st.form_submit_button("Get Readi!")
 
-    # close gray body
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ---- CLOSE FORM BODY + CARD WRAPPER ----
+    st.markdown("</div>", unsafe_allow_html=True)   # closes .tr-body
+    st.markdown("</div>", unsafe_allow_html=True)   # closes .tr-card
 
 # ---------------- HANDLE SUBMIT ----------------
 if "submitted" in locals() and submitted:
-    # Save inputs to session for the Results page
     st.session_state["resumes"] = [
         {"name": f.name, "data": f.getvalue()} for f in (resumes or [])
     ]
