@@ -38,11 +38,17 @@ html, body {
     padding-bottom:2rem;
 }
 
-/* Card header + body share same border & shadow (no separate bubble) */
+/* ONE card: header + body share same border, radius, shadow */
 .tr-card {
+    background:#F8F9FC;                   /* grey only inside the form */
+    border-radius:18px;
+    border:1px solid rgba(16,35,61,.08);
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
+    overflow:hidden;                      /* rounds header + body together */
     margin-top:0;
 }
 
+/* Dark navy bar at the top of that card */
 .tr-header {
     background:#10233D;
     color:#fff;
@@ -50,24 +56,13 @@ html, body {
     font-weight:700;
     font-size:1.15rem;
     letter-spacing:.2px;
-    border-radius:18px 18px 0 0;
-    border:1px solid rgba(16,35,61,.08);
-    border-bottom:none;
-    box-shadow:0 10px 28px rgba(16,35,61,.10);
-    margin-bottom:0;
 }
 
-/* Light gray only inside the form */
+/* Body just uses card background */
 .tr-body {
-    background:#F8F9FC;
     padding:22px 24px 26px;
-    border-radius:0 0 18px 18px;
-    border:1px solid rgba(16,35,61,.08);
-    border-top:none;
-    box-shadow:0 10px 28px rgba(16,35,61,.10);
 }
 
-/* Section titles */
 .sec-title {
     color:#10233D;
     font-weight:700;
@@ -81,9 +76,16 @@ html, body {
     border-radius:12px;
 }
 
-/* Text & number inputs: clear white boxes with visible borders */
+/* Text & number inputs: visible white boxes with border */
 .stTextInput input,
 .stNumberInput input {
+    border-radius:12px !important;
+    border:1px solid #CDD4E1 !important;
+    background:#ffffff !important;
+}
+
+/* Date inputs: same style so Start/End date boxes are visible */
+[data-testid="stDateInput"] input {
     border-radius:12px !important;
     border:1px solid #CDD4E1 !important;
     background:#ffffff !important;
@@ -207,22 +209,20 @@ with right:
                 workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
-        # --- Maximum work hours per day (label + centered input) ---
-        mid1, mid2, mid3 = st.columns([1, 2, 1])
-        with mid2:
-            # Force a clean 2-line label instead of messy wrapping
-            st.markdown(
-                "<div class='sec-title' style='margin-top:8px;'>Maximum work hours per<br>day</div>",
-                unsafe_allow_html=True,
-            )
-            max_daily = st.number_input(
-                "",
-                min_value=1.0,
-                max_value=12.0,
-                value=8.0,
-                step=1.0,
-                help=None,
-            )
+        # --- Maximum work hours per day (LEFT-JUSTIFIED like other fields) ---
+        st.markdown(
+            "<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>",
+            unsafe_allow_html=True,
+        )
+        max_daily = st.number_input(
+            "",
+            min_value=1.0,
+            max_value=12.0,
+            value=8.0,
+            step=1.0,
+            help=None,
+            label_visibility="collapsed",
+        )
 
         # --- Centered orange Get Readi! button under the 8.00 box ---
         g1, g2, g3 = st.columns([1, 2, 1])
@@ -255,3 +255,4 @@ if "submitted" in locals() and submitted:
         }
     )
     st.switch_page("pages/01_Results.py")
+
