@@ -24,9 +24,19 @@ client = OpenAI(api_key=API_KEY)
 st.markdown(
     """
 <style>
-  /* Page */
-  .main { background:#ffffff; }
-  .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1200px; }
+  /* Make entire app background pure white */
+  [data-testid="stAppViewContainer"],
+  .main,
+  html, body {
+      background:#ffffff !important;
+  }
+
+  /* Center content and keep width similar to your mockup */
+  .block-container {
+      max-width:1100px !important;
+      padding-top:1.5rem;
+      padding-bottom:2rem;
+  }
 
   /* Card around the whole form */
   .tr-card {
@@ -36,6 +46,7 @@ st.markdown(
       border:1px solid rgba(16,35,61,.08);
       box-shadow:0 10px 28px rgba(16,35,61,.10);
   }
+
   .tr-header {
       background:#10233D;
       color:#fff;
@@ -44,8 +55,12 @@ st.markdown(
       font-size:1.15rem;
       letter-spacing:.2px;
       border-radius:18px 18px 0 0;
+      margin-bottom:0;  /* ensure it visually touches the body */
   }
+
+  /* Light gray only inside the form, not the page */
   .tr-body {
+      background:#F8F9FC;
       padding:22px 24px 26px;
       border-radius:0 0 18px 18px;
   }
@@ -88,17 +103,26 @@ st.markdown(
 
   /* Remove default app header tint */
   header[data-testid="stHeader"] { background:transparent; }
+
+  /* Equal treatment for banner column */
+  .equal-col img {
+      width:100%;
+      height:auto;
+      object-fit:contain;
+  }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT: 1/3 banner, 2/3 form ----------------
-left, right = st.columns([1, 2], gap="large")
+# ---------------- LAYOUT: 1/2 banner, 1/2 form ----------------
+left, right = st.columns([1, 1], gap="large")
 
 # Left: banner
 with left:
+    st.markdown("<div class='equal-col'>", unsafe_allow_html=True)
     st.image("TeamReadi Side Banner.png", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # Right: header + form inside one rounded card
 with right:
@@ -197,7 +221,7 @@ with right:
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
-if submitted:
+if "submitted" in locals() and submitted:
     # Save inputs to session for the Results page
     st.session_state["resumes"] = [
         {"name": f.name, "data": f.getvalue()} for f in (resumes or [])
