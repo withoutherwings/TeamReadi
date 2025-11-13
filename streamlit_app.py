@@ -25,11 +25,6 @@ if not API_KEY:
 
 client = OpenAI(api_key=API_KEY)
 
-# app.py — TeamReadi Landing (collects inputs, then routes to Results)
-import os, json, base64, datetime as dt
-import streamlit as st
-from openai import OpenAI
-
 # ---------------- STYLING ----------------
 st.markdown(
     """
@@ -37,9 +32,29 @@ st.markdown(
   /* Page background + main container */
   .main { background:#ffffff; }
   .block-container {
-      padding-top:1.2rem;
-      padding-bottom:2rem;
+      padding-top:0.8rem;
+      padding-bottom:1.4rem;
       max-width:1200px;
+  }
+
+  /* Two-column wrapper: take almost full viewport height */
+  [data-testid="stHorizontalBlock"] {
+      height: calc(100vh - 80px);
+      align-items:stretch;
+  }
+
+  /* BANNER: keep same height as card */
+  .banner-shell {
+      height: 100%;
+      max-height: 680px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+  }
+  .banner-shell img {
+      height:100%;
+      width:auto;
+      object-fit:contain;
   }
 
   /* Card shell: header + body in ONE card */
@@ -49,27 +64,47 @@ st.markdown(
       border:1px solid rgba(16,35,61,.12);
       box-shadow:0 12px 30px rgba(16,35,61,.10);
       overflow:hidden;
+      height:100%;
+      max-height:680px;
+      display:flex;
+      flex-direction:column;
   }
   .card-header {
       background:#0F243D;
       color:#ffffff;
-      padding:18px 28px;
+      padding:16px 26px;
       font-weight:700;
       letter-spacing:.2px;
-      font-size:1.15rem;
-      border-radius:24px 24px 0 0;  /* rounded top corners */
+      font-size:1.1rem;
+      border-radius:24px 24px 0 0;
   }
   .card-body {
-      padding:20px 26px 22px 26px;
-      border-radius:0 0 24px 24px;
+      padding:18px 24px 18px 24px;
       background:#F9FAFB;
+      border-radius:0 0 24px 24px;
+      flex:1;
+      overflow-y:auto;
+  }
+
+  /* Kill Streamlit's default "floating card" on st.form */
+  [data-testid="stForm"] {
+      padding:0 !important;
+      margin-top:0 !important;
+      background:transparent !important;
+      border:none !important;
+      box-shadow:none !important;
+  }
+  [data-testid="stForm"] > div {
+      padding:0 !important;
+      background:transparent !important;
+      box-shadow:none !important;
   }
 
   .sec-title {
       color:#10233D;
       font-weight:700;
-      margin:10px 0 6px;
-      font-size:0.98rem;
+      margin:6px 0 4px;
+      font-size:0.96rem;
   }
   .subtle {
       color:#6B7280;
@@ -84,7 +119,7 @@ st.markdown(
       background:#FFFFFF !important;
   }
 
-  /* Text inputs (URLs etc.) always visible */
+  /* Text inputs (URLs etc.) */
   .stTextInput > div > input {
       border-radius:10px !important;
       border:1px solid rgba(16,35,61,.25) !important;
@@ -96,14 +131,14 @@ st.markdown(
       border-radius:10px !important;
   }
 
-  /* Orange submit button inside form */
-  div.stForm button[kind="formSubmit"],
-  div.stForm [data-testid="baseButton-primaryFormSubmit"],
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
+  /* Orange submit button: ALWAYS */
+  button[kind="formSubmit"],
+  [data-testid="baseButton-primaryFormSubmit"],
+  [data-testid="baseButton-secondaryFormSubmit"] {
       width:100%;
       max-width:190px;
       padding:12px 16px;
-      border-radius:10px;
+      border-radius:10px !important;
       border:0 !important;
       background:#FF8A1E !important;
       color:#ffffff !important;
@@ -111,9 +146,9 @@ st.markdown(
       letter-spacing:.2px;
       box-shadow:0 4px 10px rgba(255,138,30,.35);
   }
-  div.stForm button[kind="formSubmit"]:hover,
-  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
+  button[kind="formSubmit"]:hover,
+  [data-testid="baseButton-primaryFormSubmit"]:hover,
+  [data-testid="baseButton-secondaryFormSubmit"]:hover {
       background:#F27B00 !important;
   }
 
@@ -127,7 +162,9 @@ st.markdown(
 banner_col, form_col = st.columns([1, 2], gap="large")
 
 with banner_col:
+    st.markdown("<div class='banner-shell'>", unsafe_allow_html=True)
     st.image("TeamReadi Side Banner.png", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with form_col:
     # ONE unified card: header + body
@@ -148,7 +185,8 @@ with form_col:
         st.markdown("<div class='subtle'>PDF, DOC, DOCX, TXT</div>", unsafe_allow_html=True)
 
         # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:14px;'>Project Requirements</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>",
+                    unsafe_allow_html=True)
         proj = st.file_uploader(
             "Drag & drop files here, or browse",
             type=["pdf", "doc", "docx", "txt", "md"],
@@ -191,7 +229,8 @@ with form_col:
             end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
 
         # Working days
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Working days</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>",
+                    unsafe_allow_html=True)
         day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         defaults = [True, True, True, True, True, False, False]
         dcols = st.columns(7)
@@ -204,7 +243,10 @@ with form_col:
         selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
 
         # Maximum hours per day – narrow + centered
-        st.markdown("<div class='sec-title' style='margin-top:16px;'>Maximum work hours per day</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='sec-title' style='margin-top:12px;'>Maximum work hours per day</div>",
+            unsafe_allow_html=True,
+        )
         mh_left, mh_center, mh_right = st.columns([2, 1, 2])
         with mh_center:
             max_daily = st.number_input(
@@ -225,7 +267,7 @@ with form_col:
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
-if submitted:
+if "submitted" in locals() and submitted:
     st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
     st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
 
@@ -243,7 +285,5 @@ if submitted:
         }
     )
 
-    st.switch_page("pages/01_Results.py")
-
-    # If you have pages/01_Results.py this will navigate there
+    # Navigate to results page
     st.switch_page("pages/01_Results.py")
