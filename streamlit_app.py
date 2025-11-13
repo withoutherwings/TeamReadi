@@ -1,4 +1,5 @@
-# app.py — TeamReadi Landing (collects inputs, then routes to Results)
+# app.py — TeamReadi Landing (complete replacement)
+
 import os, json, base64, datetime as dt
 import streamlit as st
 from openai import OpenAI
@@ -6,8 +7,8 @@ from openai import OpenAI
 # ---------------- UI SETUP ----------------
 st.set_page_config(page_title="TeamReadi", page_icon="🕒", layout="wide")
 
-# ----- Fixed weighting -----
-SKILL_WEIGHT = 0.70  # 70% skills, 30% availability
+# ----- Fixed weighting (used later in scoring logic) -----
+SKILL_WEIGHT = 0.70
 
 # ----- OpenAI setup -----
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -15,128 +16,124 @@ MODEL_NAME = st.secrets.get("MODEL_NAME", "gpt-4o")
 EMBED_MODEL = st.secrets.get("EMBED_MODEL", "text-embedding-3-large")
 
 if not API_KEY:
-    st.error("OPENAI_API_KEY is not set. Add it in .streamlit/secrets.toml or as an env var.")
+    st.error("OPENAI_API_KEY is not set.")
     st.stop()
 
 client = OpenAI(api_key=API_KEY)
 
-# ---------------- STYLING ----------------
-st.markdown(
-    """
+# ---------------- GLOBAL STYLING ----------------
+st.markdown("""
 <style>
-  /* PAGE BACKGROUND – hard white */
-  html, body, .stApp, [data-testid="stAppViewContainer"], .main {
-    background-color: #ffffff !important;
-  }
-  .block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 2rem;
-    max-width: 1180px;
-  }
 
-  /* Make the RIGHT column (form) look like a card by styling the form element */
-  [data-testid="stForm"] {
-    background: #FFFFFF;
-    border-radius: 14px;
-    border: 1px solid rgba(16,35,61,.08);
-    box-shadow: 0 10px 28px rgba(16,35,61,.10);
-    padding: 0 18px 18px 18px;  /* top handled by header */
-  }
+    /* Page background */
+    .main { background:#ffffff !important; }
 
-  /* Header bar INSIDE the form, flush to edges */
-  .card-header {
-    background: #10233D;
-    color: #ffffff;
-    padding: 14px 18px;
-    font-weight: 700;
-    letter-spacing: .2px;
-    font-size: 1.05rem;
-    border-top-left-radius: 14px;
-    border-top-right-radius: 14px;
-    margin: -18px -18px 12px -18px;  /* stretch to form edges, remove gap */
-  }
+    .block-container {
+        padding-top:1.2rem !important;
+        padding-bottom:2rem !important;
+        max-width:1450px !important;
+    }
 
-  /* Section titles */
-  .sec-title {
-    color: #10233D;
-    font-weight: 700;
-    margin: 8px 0 6px;
-  }
+    /* Card container */
+    .card {
+        background:#FFFFFF;
+        border-radius:14px;
+        overflow:hidden;
+        border:1px solid rgba(16,35,61,.08);
+        box-shadow:0 10px 28px rgba(16,35,61,.10);
+    }
 
-  /* Upload boxes */
-  .stFileUploader > div {
-    border: 1px dashed rgba(16,35,61,.25) !important;
-    border-radius: 10px;
-  }
+    .card.narrow {
+        max-width:1000px;
+        margin:0 auto;
+    }
 
-  /* Text inputs – always visible */
-  .stTextInput input {
-    border-radius: 10px !important;
-    border: 1px solid #D0D5DD !important;   /* light gray by default */
-    padding: 8px 10px;
-    background-color: #FFFFFF;
-  }
-  .stTextInput input:focus {
-    border: 1px solid #FF8A1E !important;   /* orange on focus */
-    outline: none !important;
-    box-shadow: 0 0 0 1px rgba(255,138,30,.25);
-  }
+    /* Header Bar */
+    .card-header {
+        background:#10233D !important;  /* solid navy */
+        color:#fff;
+        padding:20px 26px;
+        font-weight:700;
+        border-top-left-radius:14px;
+        border-top-right-radius:14px;
+        letter-spacing:.2px;
+        font-size:1.15rem;
+    }
 
-  /* Number input border match */
-  .stNumberInput input {
-    border-radius: 10px !important;
-    border: 1px solid #D0D5DD !important;
-  }
-  .stNumberInput input:focus {
-    border: 1px solid #FF8A1E !important;
-    outline: none !important;
-    box-shadow: 0 0 0 1px rgba(255,138,30,.25);
-  }
+    .card-body {
+        padding:22px;
+        background:#ffffff;
+    }
 
-  /* Orange submit button inside the form */
-  div.stForm button[kind="formSubmit"],
-  div.stForm button,
-  div.stForm [data-testid="baseButton-primaryFormSubmit"],
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
-      width: 100%;
-      padding: 12px 16px;
-      border-radius: 10px;
-      border: 0 !important;
-      background: #FF8A1E !important;
-      color: #ffffff !important;
-      font-weight: 800;
-      letter-spacing: .2px;
-      box-shadow: 0 2px 0 rgba(0,0,0,.06);
-  }
-  div.stForm button:hover,
-  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover,
-  div.stForm [data-testid="baseButton-secondaryFormSubmit"]:hover {
-      background: #F27B00 !important;
-  }
+    .sec-title {
+        color:#10233D;
+        font-weight:700;
+        margin:12px 0 6px;
+        font-size:1rem;
+    }
 
-  /* Remove default Streamlit header tint */
-  header[data-testid="stHeader"] {
-    background: transparent;
-  }
+    /* URL bars and number inputs always visible */
+    .stTextInput input,
+    .stNumberInput input {
+        border-radius:10px !important;
+        border:1px solid #FF8A1E !important;
+        background:#fff !important;
+        box-shadow:none !important;
+    }
+
+    /* File upload boxes */
+    .stFileUploader > div {
+        border:1px dashed rgba(16,35,61,.25) !important;
+        border-radius:10px !important;
+    }
+
+    /* Orange CTA button */
+    div.stForm button[kind="formSubmit"],
+    div.stForm [data-testid="baseButton-primaryFormSubmit"],
+    div.stForm [data-testid="baseButton-secondaryFormSubmit"] {
+        width:auto !important;
+        padding:12px 32px !important;
+        border-radius:10px !important;
+        border:0 !important;
+        background:#FF8A1E !important;
+        color:#ffffff !important;
+        font-weight:800 !important;
+        letter-spacing:.2px !important;
+        display:block !important;
+        margin:0 auto !important;
+    }
+
+    div.stForm button:hover {
+        background:#F27B00 !important;
+    }
+
+    header[data-testid="stHeader"] { background:transparent !important; }
+
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
+
+
 
 # ---------------- LAYOUT ----------------
-# 1/3 banner : 2/3 form
-left, right = st.columns([1, 2], gap="large")
+left, right = st.columns([1, 2], gap="large")     # 1/3 | 2/3 layout
 
+
+# LEFT BANNER
 with left:
     st.image("TeamReadi Side Banner.png", use_container_width=True)
 
+
+
+# RIGHT FORM
 with right:
+    st.markdown("<div class='card narrow'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-body'>", unsafe_allow_html=True)
+
+    # ---------------- SINGLE FORM ----------------
     with st.form("generate_form", clear_on_submit=False):
 
-        # Attached navy header
-        st.markdown("<div class='card-header'>Generate New Report</div>", unsafe_allow_html=True)
-
-        # --- Upload Resumes ---
+        # UPLOAD RESUMES
         st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
         resumes = st.file_uploader(
             "Drag & drop files here, or browse",
@@ -146,103 +143,98 @@ with right:
         )
         st.caption("PDF, DOC, DOCX, TXT")
 
-        # --- Project Requirements ---
-        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>",
-                    unsafe_allow_html=True)
+        # PROJECT REQUIREMENTS
+        st.markdown("<div class='sec-title'>Project Requirements</div>", unsafe_allow_html=True)
         proj = st.file_uploader(
             "Drag & drop files here, or browse",
             type=["pdf", "doc", "docx", "txt", "md"],
             accept_multiple_files=True,
-            key="proj",
             label_visibility="collapsed",
         )
-        req_url = st.text_input("Or paste job / RFP URL")
+
+        req_url = st.text_input("Or paste job / RFP URL", placeholder="https://...")
 
         st.markdown("---")
 
-        # --- Import Calendar ---
+        # CALENDAR OPTIONS
         st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
         cal_mode = st.radio(
             "Calendar import mode",
-            options=["Calendar link", "Randomize hours (demo mode)"],
+            ["Calendar link", "Randomize hours (demo mode)"],
             horizontal=True,
             label_visibility="collapsed",
         )
 
         cal_url = ""
         randomize_seed = None
-        cal_file = None  # no manual upload in this version
 
         if cal_mode == "Calendar link":
             cal_url = st.text_input(
-                "Paste a public or shared calendar URL (Google, Outlook, etc.)",
-                placeholder="https://...",
-                help="Must be publicly available (read-only).",
+                "Paste a public/shared calendar URL (Google, Outlook, etc.)",
+                placeholder="https://calendar.google.com/calendar/ical/…",
+                help="Must be publicly available."
             )
         else:
             randomize_seed = st.slider(
                 "Average utilization target (%)",
-                min_value=10,
-                max_value=100,
-                value=60,
-                help="Used to generate demo availability when no real calendar is connected.",
+                10, 100, 60
             )
 
         st.markdown("---")
 
-        # --- Availability Parameters ---
+        # AVAILABILITY
         st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
+
         c1, c2 = st.columns(2)
         with c1:
             start_date = st.date_input("Start date", value=dt.date.today())
         with c2:
             end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
 
-        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>",
-                    unsafe_allow_html=True)
+        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
         day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         defaults = [True, True, True, True, True, False, False]
+
         dcols = st.columns(7)
-        workdays_checks = []
+        workdays = []
         for i, col in enumerate(dcols):
             with col:
-                workdays_checks.append(
-                    st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}")
-                )
-        selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
+                workdays.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
 
-        max_daily = st.number_input(
-            "Maximum work hours per day",
-            min_value=1.0,
-            max_value=12.0,
-            value=8.0,
-            step=1.0,
-            help=None,
-        )
+        # NARROW MAX HOURS INPUT
+        st.markdown("Maximum work hours per day")
+        h1, hmid, h3 = st.columns([1, 1, 1])
+        with hmid:
+            max_daily = st.number_input(
+                "",
+                min_value=1.0, max_value=12.0, value=8.0, step=1.0,
+                key="max_daily_hours",
+            )
 
-        # Centered CTA
-        st.markdown("")
-        _, mid, _ = st.columns([1, 2, 1])
-        with mid:
-            submitted = st.form_submit_button("Get Readi!")
+        st.write("")
 
-# ---------------- HANDLE SUBMIT ----------------
+        # CTA BUTTON (centered automatically)
+        submitted = st.form_submit_button("Get Readi!")
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+
+
+# ---------------- STORE DATA & ROUTE ----------------
 if submitted:
     st.session_state["resumes"] = [{"name": f.name, "data": f.getvalue()} for f in (resumes or [])]
     st.session_state["req_files"] = [{"name": f.name, "data": f.getvalue()} for f in (proj or [])]
-    st.session_state.update(
-        {
-            "req_url": req_url or "",
-            "cal_method": cal_mode,
-            "cal_link": cal_url or "",
-            "random_target": randomize_seed,
-            "cal_upload": None,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "workdays": selected_days,
-            "max_hours": float(max_daily),
-            "alpha": SKILL_WEIGHT,
-        }
-    )
-    st.switch_page("pages/01_Results.py")
 
+    st.session_state.update({
+        "req_url": req_url,
+        "cal_method": cal_mode,
+        "cal_link": cal_url,
+        "random_target": randomize_seed,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "workdays": [d for d, keep in zip(day_labels, workdays) if keep],
+        "max_hours": float(max_daily),
+        "alpha": SKILL_WEIGHT,
+    })
+
+    st.switch_page("pages/01_Results.py") 
