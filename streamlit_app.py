@@ -24,92 +24,103 @@ client = OpenAI(api_key=API_KEY)
 st.markdown(
     """
 <style>
-  /* Make entire app background pure white */
-  [data-testid="stAppViewContainer"],
-  .main,
-  html, body {
-      background:#ffffff !important;
-  }
+/* Make entire app background pure white */
+[data-testid="stAppViewContainer"],
+.main,
+html, body {
+    background:#ffffff !important;
+}
 
-  /* Center content and keep width similar to your mockup */
-  .block-container {
-      max-width:1100px !important;
-      padding-top:1.5rem;
-      padding-bottom:2rem;
-  }
+/* Center content and keep width similar to your mockup */
+.block-container {
+    max-width:1100px !important;
+    padding-top:1.5rem;
+    padding-bottom:2rem;
+}
 
-  /* Card around the whole form */
-  .tr-card {
-      background:#FFFFFF;
-      border-radius:18px;
-      overflow:hidden;
-      border:1px solid rgba(16,35,61,.08);
-      box-shadow:0 10px 28px rgba(16,35,61,.10);
-  }
+/* Card header + body share same border & shadow (no separate bubble) */
+.tr-card {
+    margin-top:0;
+}
 
-  .tr-header {
-      background:#10233D;
-      color:#fff;
-      padding:18px 26px;
-      font-weight:700;
-      font-size:1.15rem;
-      letter-spacing:.2px;
-      border-radius:18px 18px 0 0;
-      margin-bottom:0;  /* ensure it visually touches the body */
-  }
+.tr-header {
+    background:#10233D;
+    color:#fff;
+    padding:18px 26px;
+    font-weight:700;
+    font-size:1.15rem;
+    letter-spacing:.2px;
+    border-radius:18px 18px 0 0;
+    border:1px solid rgba(16,35,61,.08);
+    border-bottom:none;
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
+    margin-bottom:0;
+}
 
-  /* Light gray only inside the form, not the page */
-  .tr-body {
-      background:#F8F9FC;
-      padding:22px 24px 26px;
-      border-radius:0 0 18px 18px;
-  }
+/* Light gray only inside the form */
+.tr-body {
+    background:#F8F9FC;
+    padding:22px 24px 26px;
+    border-radius:0 0 18px 18px;
+    border:1px solid rgba(16,35,61,.08);
+    border-top:none;
+    box-shadow:0 10px 28px rgba(16,35,61,.10);
+}
 
-  .sec-title {
-      color:#10233D;
-      font-weight:700;
-      margin:8px 0 6px;
-      font-size:1.0rem;
-  }
+/* Section titles */
+.sec-title {
+    color:#10233D;
+    font-weight:700;
+    margin:8px 0 6px;
+    font-size:1.0rem;
+}
 
-  /* Make uploaders look like cards */
-  .stFileUploader > div {
-      border:1px dashed rgba(16,35,61,.25)!important;
-      border-radius:12px;
-  }
+/* Make uploaders look like cards */
+.stFileUploader > div {
+    border:1px dashed rgba(16,35,61,.25)!important;
+    border-radius:12px;
+}
 
-  /* Text & number inputs */
-  .stTextInput input, .stNumberInput input {
-      border-radius:12px !important;
-  }
+/* Text & number inputs: clear white boxes with visible borders */
+.stTextInput input,
+.stNumberInput input {
+    border-radius:12px !important;
+    border:1px solid #CDD4E1 !important;
+    background:#ffffff !important;
+}
 
-  /* Orange form submit button, centered */
-  div.stForm button[kind="formSubmit"],
-  div.stForm [data-testid="baseButton-primaryFormSubmit"] {
-      min-width:160px;
-      padding:10px 20px;
-      border-radius:10px;
-      border:0 !important;
-      background:#FF8A1E !important;
-      color:#ffffff !important;
-      font-weight:800;
-      letter-spacing:.2px;
-      box-shadow:0 2px 0 rgba(0,0,0,.06);
-  }
-  div.stForm button[kind="formSubmit"]:hover,
-  div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover {
-      background:#F27B00 !important;
-  }
+/* Prevent checkbox labels (Mon, Tue, ...) from splitting onto 2 lines */
+div[data-testid="stCheckbox"] label {
+    white-space:nowrap;
+}
 
-  /* Remove default app header tint */
-  header[data-testid="stHeader"] { background:transparent; }
+/* Orange form submit button, centered */
+div.stForm button[kind="formSubmit"],
+div.stForm [data-testid="baseButton-primaryFormSubmit"] {
+    min-width:160px;
+    padding:10px 20px;
+    border-radius:10px;
+    border:0 !important;
+    background:#FF8A1E !important;
+    color:#ffffff !important;
+    font-weight:800;
+    letter-spacing:.2px;
+    box-shadow:0 2px 0 rgba(0,0,0,.06);
+}
+div.stForm button[kind="formSubmit"]:hover,
+div.stForm [data-testid="baseButton-primaryFormSubmit"]:hover {
+    background:#F27B00 !important;
+}
 
-  /* Equal treatment for banner column */
-  .equal-col img {
-      width:100%;
-      height:auto;
-      object-fit:contain;
-  }
+/* Remove default app header tint */
+header[data-testid="stHeader"] { background:transparent; }
+
+/* Equal treatment for banner column */
+.equal-col img {
+    width:100%;
+    height:auto;
+    object-fit:contain;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -199,8 +210,9 @@ with right:
         # --- Maximum work hours per day (label + centered input) ---
         mid1, mid2, mid3 = st.columns([1, 2, 1])
         with mid2:
+            # Force a clean 2-line label instead of messy wrapping
             st.markdown(
-                "<div class='sec-title' style='margin-top:8px;'>Maximum work hours per day</div>",
+                "<div class='sec-title' style='margin-top:8px;'>Maximum work hours per<br>day</div>",
                 unsafe_allow_html=True,
             )
             max_daily = st.number_input(
