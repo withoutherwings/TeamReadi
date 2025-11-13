@@ -38,11 +38,6 @@ st.markdown(
   .main { background:#ffffff; }
   .block-container { padding-top:1.2rem; padding-bottom:2rem; max-width:1200px; }
 
-  /* Two-column layout: banner 1/3, form 2/3 */
-  .tr-layout { display:flex; gap:2.5rem; align-items:flex-start; }
-  .tr-left  { flex:1; }
-  .tr-right { flex:2; }
-
   /* Card around the whole form */
   .tr-card {
       background:#FFFFFF;
@@ -78,7 +73,7 @@ st.markdown(
       border-radius:12px;
   }
 
-  /* Inputs */
+  /* Text & number inputs */
   .stTextInput input, .stNumberInput input {
       border-radius:12px !important;
   }
@@ -108,108 +103,108 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------------- LAYOUT ----------------
-st.markdown("<div class='tr-layout'>", unsafe_allow_html=True)
+# ---------------- LAYOUT: 1/3 banner, 2/3 form ----------------
+left, right = st.columns([1, 2], gap="large")
 
-# Left: banner (about 1/3 width)
-st.markdown("<div class='tr-left'>", unsafe_allow_html=True)
-st.image("TeamReadi Side Banner.png", use_container_width=True)
-st.markdown("</div>", unsafe_allow_html=True)
+# Left: banner
+with left:
+    st.image("TeamReadi Side Banner.png", use_container_width=True)
 
-# Right: header + form inside one card (about 2/3 width)
-st.markdown("<div class='tr-right'>", unsafe_allow_html=True)
-st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
-st.markdown("<div class='tr-header'>Generate New Report</div>", unsafe_allow_html=True)
-st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
+# Right: header + form inside one rounded card
+with right:
+    st.markdown("<div class='tr-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='tr-header'>Generate New Report</div>", unsafe_allow_html=True)
+    st.markdown("<div class='tr-body'>", unsafe_allow_html=True)
 
-# ---------- SINGLE FORM (only one!) ----------
-with st.form("generate_form", clear_on_submit=False):
-    # --- Upload Resumes ---
-    st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
-    resumes = st.file_uploader(
-        "Drag & drop files here, or browse",
-        type=["pdf", "doc", "docx", "txt"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
-    st.caption("PDF, DOC, DOCX, TXT")
-
-    # --- Project Requirements ---
-    st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>", unsafe_allow_html=True)
-    proj = st.file_uploader(
-        "Drag & drop files here, or browse",
-        type=["pdf", "doc", "docx", "txt", "md"],
-        accept_multiple_files=True,
-        key="proj",
-        label_visibility="collapsed",
-    )
-    req_url = st.text_input("Or paste job / RFP URL")
-
-    st.markdown("---")
-
-    # --- Import Calendar ---
-    st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
-    cal_mode = st.radio(
-        "Calendar import mode",
-        options=["Calendar link", "Randomize hours (demo mode)"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-
-    cal_url = ""
-    randomize_seed = None
-
-    if cal_mode == "Calendar link":
-        cal_url = st.text_input(
-            "Paste a public/shared calendar URL (Google, Outlook, etc.)",
-            placeholder="https://calendar.google.com/calendar/ical/…",
-            help="Must be publicly available.",
+    # ---------- SINGLE FORM ----------
+    with st.form("generate_form", clear_on_submit=False):
+        # --- Upload Resumes ---
+        st.markdown("<div class='sec-title'>Upload Resumes</div>", unsafe_allow_html=True)
+        resumes = st.file_uploader(
+            "Drag & drop files here, or browse",
+            type=["pdf", "doc", "docx", "txt"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
         )
-    else:
-        randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
+        st.caption("PDF, DOC, DOCX, TXT")
 
-    st.markdown("---")
+        # --- Project Requirements ---
+        st.markdown("<div class='sec-title' style='margin-top:10px;'>Project Requirements</div>", unsafe_allow_html=True)
+        proj = st.file_uploader(
+            "Drag & drop files here, or browse",
+            type=["pdf", "doc", "docx", "txt", "md"],
+            accept_multiple_files=True,
+            key="proj",
+            label_visibility="collapsed",
+        )
+        req_url = st.text_input("Or paste job / RFP URL")
 
-    # --- Availability Parameters ---
-    st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        start_date = st.date_input("Start date", value=dt.date.today())
-    with c2:
-        end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
+        st.markdown("---")
 
-    st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
-    day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    defaults = [True, True, True, True, True, False, False]
-    dcols = st.columns(7)
-    workdays_checks = []
-    for i, col in enumerate(dcols):
-        with col:
-            workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
-    selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
-
-    # Max hours/day – label + centered narrow input
-    st.markdown("<div class='sec-title' style='margin-top:8px;'>Maximum work hours per day</div>", unsafe_allow_html=True)
-    c3, c4, c5 = st.columns([1, 2, 1])
-    with c4:
-        max_daily = st.number_input(
-            "",
-            min_value=1.0,
-            max_value=12.0,
-            value=8.0,
-            step=1.0,
-            help=None,
+        # --- Import Calendar ---
+        st.markdown("<div class='sec-title'>Import Calendar</div>", unsafe_allow_html=True)
+        cal_mode = st.radio(
+            "Calendar import mode",
+            options=["Calendar link", "Randomize hours (demo mode)"],
+            horizontal=True,
+            label_visibility="collapsed",
         )
 
-    # Centered orange CTA directly under the number input
-    c6, c7, c8 = st.columns([1, 1, 1])
-    with c7:
-        submitted = st.form_submit_button("Get Readi!")
+        cal_url = ""
+        randomize_seed = None
 
-# close card + right + layout wrappers
-st.markdown("</div></div>", unsafe_allow_html=True)  # close .tr-body + .tr-card
-st.markdown("</div>", unsafe_allow_html=True)        # close .tr-right
-st.markdown("</div>", unsafe_allow_html=True)        # close .tr-layout
+        if cal_mode == "Calendar link":
+            cal_url = st.text_input(
+                "Paste a public/shared calendar URL (Google, Outlook, etc.)",
+                placeholder="https://calendar.google.com/calendar/ical/…",
+                help="Must be publicly available.",
+            )
+        else:
+            randomize_seed = st.slider("Average utilization target (%)", 10, 100, 60)
+
+        st.markdown("---")
+
+        # --- Availability Parameters ---
+        st.markdown("<div class='sec-title'>Availability Parameters</div>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            start_date = st.date_input("Start date", value=dt.date.today())
+        with c2:
+            end_date = st.date_input("End date", value=dt.date.today() + dt.timedelta(days=30))
+
+        st.markdown("<div class='sec-title' style='margin-top:8px;'>Working days</div>", unsafe_allow_html=True)
+        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        defaults = [True, True, True, True, True, False, False]
+        dcols = st.columns(7)
+        workdays_checks = []
+        for i, col in enumerate(dcols):
+            with col:
+                workdays_checks.append(st.checkbox(day_labels[i], value=defaults[i], key=f"d{i}"))
+        selected_days = [d for d, keep in zip(day_labels, workdays_checks) if keep]
+
+        # --- Maximum work hours per day (label + centered input) ---
+        mid1, mid2, mid3 = st.columns([1, 2, 1])
+        with mid2:
+            st.markdown(
+                "<div class='sec-title' style='margin-top:8px;'>Maximum work hours per day</div>",
+                unsafe_allow_html=True,
+            )
+            max_daily = st.number_input(
+                "",
+                min_value=1.0,
+                max_value=12.0,
+                value=8.0,
+                step=1.0,
+                help=None,
+            )
+
+        # --- Centered orange Get Readi! button under the 8.00 box ---
+        g1, g2, g3 = st.columns([1, 2, 1])
+        with g2:
+            submitted = st.form_submit_button("Get Readi!")
+
+    # close body + card
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ---------------- HANDLE SUBMIT ----------------
 if submitted:
@@ -230,9 +225,7 @@ if submitted:
             "end_date": str(end_date),
             "workdays": selected_days,
             "max_hours": float(max_daily),
-            "alpha": SKILL_WEIGHT,  # or swap to a slider in the UI if you prefer
+            "alpha": SKILL_WEIGHT,
         }
     )
-    # Navigate to results page
     st.switch_page("pages/01_Results.py")
-
