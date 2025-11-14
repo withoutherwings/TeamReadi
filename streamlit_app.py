@@ -273,3 +273,13 @@ if submitted:
         }
     )
     st.switch_page("pages/01_Results.py")
+# after: client = OpenAI(api_key=API_KEY)
+
+try:
+    test = client.embeddings.create(
+        model=EMBED_MODEL,
+        input="TeamReadi connectivity test"
+    )
+    st.caption("✅ OpenAI connection OK")
+except Exception as e:
+    st.error(f"❌ OpenAI error: {e}")
