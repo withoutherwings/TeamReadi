@@ -10,7 +10,6 @@ import fitz                    # PyMuPDF
 from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
-from rapidfuzz import fuzz
 
 from backend.roles_backend import infer_resume_role  # NEW: role inference
 
