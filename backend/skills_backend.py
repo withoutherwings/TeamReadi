@@ -1,11 +1,6 @@
 """
 skills_backend.py
 Project requirements ↔ resume matching using OpenAI.
-
-Two main entrypoints:
-
-- extract_project_requirements(project_text: str) -> list[dict]
-- score_resume_against_requirements(requirements: list[dict], resume_text: str) -> dict
 """
 
 import json
@@ -15,42 +10,32 @@ from typing import List, Dict, Any
 
 from openai import OpenAI
 
-# =========================
-# OpenAI client setup
-# =========================
 
-def _get_api_key() -> str | None:
-    """
-    Try to pull OPENAI_API_KEY from Streamlit secrets first, then env vars.
-    This matches how app.py is configured.
-    """
-    # Streamlit may not be available when running tests, so guard import.
+# ---------- OpenAI client helper ----------
+
+def _get_client() -> OpenAI | None:
+    """Match how app.py loads the key: st.secrets first, then env."""
     try:
         import streamlit as st  # type: ignore
         key = st.secrets.get("OPENAI_API_KEY")
-        if key:
-            return key
     except Exception:
-        pass
+        key = None
 
-    # Fallback: plain environment variable
-    return os.getenv("OPENAI_API_KEY")
+    if not key:
+        key = os.getenv("OPENAI_API_KEY")
+
+    if not key:
+        return None
+    return OpenAI(api_key=key)
 
 
-API_KEY = _get_api_key()
-client = OpenAI(api_key=API_KEY) if API_KEY else None
+# we will call this inside each function so it always sees the right key
+# instead of freezing a None client at import time.
 
 
-# =========================
-# Fallback helper functions
-# =========================
+# ---------- Fallback helpers (used only if API fails) ----------
 
 def _fallback_requirements(project_text: str) -> List[Dict[str, Any]]:
-    """
-    Very simple backup if the LLM call or JSON parsing fails.
-    We just grab some keywords from the project text and treat them
-    as "requirements" so the rest of the pipeline can still run.
-    """
     text = (project_text or "").lower()
     tokens = re.findall(r"[a-z]{4,}", text)
 
@@ -71,19 +56,14 @@ def _fallback_requirements(project_text: str) -> List[Dict[str, Any]]:
                 "id": f"S{i}",
                 "label": word.capitalize(),
                 "description": f"Evidence of {word} in the project description.",
-                "importance": 2,  # treat as "important"
+                "importance": 2,
             }
         )
     return reqs
 
 
 def _fallback_resume_score(requirements: List[Dict[str, Any]], resume_text: str) -> Dict[str, Any]:
-    """
-    Simple heuristic scoring used if the LLM output cannot be parsed.
-    Looks for requirement label words in the resume text.
-    """
     text = (resume_text or "").lower()
-
     per_skill = []
     total_weight = 0.0
     got_weight = 0.0
@@ -97,7 +77,6 @@ def _fallback_resume_score(requirements: List[Dict[str, Any]], resume_text: str)
         evidence = ""
 
         if label and label in text:
-            # crude: if phrase appears, call it a strong match
             match_status = "strong_match"
             idx = text.find(label)
             snippet = resume_text[max(idx - 40, 0): idx + len(label) + 40]
@@ -113,36 +92,22 @@ def _fallback_resume_score(requirements: List[Dict[str, Any]], resume_text: str)
             }
         )
 
-    if total_weight <= 0:
-        skill_pct = 0.0
-    else:
-        skill_pct = (got_weight / total_weight) * 100.0
+    skill_pct = (got_weight / total_weight * 100.0) if total_weight > 0 else 0.0
 
-    return {
-        "per_skill": per_skill,
-        "skill_match_pct": skill_pct,
-    }
+    return {"per_skill": per_skill, "skill_match_pct": skill_pct}
 
 
-# =========================
-# Project requirement extraction
-# =========================
+# ---------- Project requirement extraction ----------
 
 def extract_project_requirements(project_text: str) -> List[Dict[str, Any]]:
     """
-    Read the RFP / project description and return a list of key requirements.
-
-    Intended shape:
+    Returns a list like:
     [
         {"id": "S1", "label": "...", "description": "...", "importance": 1-3},
         ...
     ]
-
-    This function is defensive: if the LLM call fails or returns invalid JSON,
-    it falls back to a simple keyword-based requirements list.
     """
-
-    # If we have no API key or no text, just use fallback
+    client = _get_client()
     if not client or not project_text or not project_text.strip():
         return _fallback_requirements(project_text)
 
@@ -186,14 +151,12 @@ Respond as JSON with a single key "requirements" whose value is a list of object
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            # Model responded but not in clean JSON
             return _fallback_requirements(project_text)
 
         reqs = data.get("requirements", [])
         if not isinstance(reqs, list) or not reqs:
             return _fallback_requirements(project_text)
 
-        # Ensure each requirement has expected keys; fill in defaults if missing
         cleaned: List[Dict[str, Any]] = []
         for i, r in enumerate(reqs, start=1):
             if not isinstance(r, dict):
@@ -209,33 +172,13 @@ Respond as JSON with a single key "requirements" whose value is a list of object
         return cleaned or _fallback_requirements(project_text)
 
     except Exception:
-        # Any API or network error → fallback
         return _fallback_requirements(project_text)
 
 
-# =========================
-# Resume scoring
-# =========================
+# ---------- Resume scoring ----------
 
 def score_resume_against_requirements(requirements: List[Dict[str, Any]], resume_text: str) -> Dict[str, Any]:
-    """
-    For a single resume, decide strong / partial / no match for each requirement.
-
-    Returns:
-    {
-        "per_skill": [
-            {"id": "...", "label": "...", "match_status": "strong_match"|"partial_match"|"no_match",
-             "evidence_snippet": "..."},
-            ...
-        ],
-        "skill_match_pct": float
-    }
-
-    This is also defensive: if the LLM output cannot be parsed as JSON, we fall back
-    to a simple keyword-based matcher so the app still produces useful results.
-    """
-
-    # If we have no client, go straight to fallback
+    client = _get_client()
     if not client:
         return _fallback_resume_score(requirements, resume_text)
 
@@ -280,13 +223,11 @@ Respond as JSON with:
         )
 
         raw = resp.output[0].content[0].text or ""
-
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return _fallback_resume_score(requirements, resume_text)
 
-        # Validate minimal structure
         if "per_skill" not in data or "skill_match_pct" not in data:
             return _fallback_resume_score(requirements, resume_text)
 
@@ -294,4 +235,3 @@ Respond as JSON with:
 
     except Exception:
         return _fallback_resume_score(requirements, resume_text)
-
