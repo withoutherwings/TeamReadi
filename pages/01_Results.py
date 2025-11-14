@@ -169,7 +169,13 @@ PROFILE_SCHEMA = {
 
 
 def llm_extract_job(client, job_text: str) -> Dict[str, Any]:
-    if not client:
+    """
+    Use the LLM to summarize the project / RFP into a structured spec.
+    Falls back to a simple heuristic if the API is unavailable or JSON
+    parsing fails.
+    """
+    # Fallback if no client or no text
+    if not client or not (job_text or "").strip():
         words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
         return {
             "title": "",
@@ -181,17 +187,61 @@ def llm_extract_job(client, job_text: str) -> Dict[str, Any]:
             "location": "",
             "other_hard_requirements": [],
         }
-    prompt = "Extract a concise hiring spec from the JOB TEXT.\n\nJOB TEXT:\n" + (job_text or "")
-    r = client.responses.create(
-        model=st.secrets.get("MODEL_NAME", "gpt-4o-mini"),
-        input=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_schema", "json_schema": JOB_SCHEMA},
-        temperature=0,
-    )
+
+    prompt = f"""
+You are helping a construction firm understand an RFP or job posting.
+
+Read the following project description and return JSON with these keys:
+- title: short project or role title
+- summary: 3–6 sentence summary of what is being requested
+- must_have_skills: list of the 5–12 most critical skills, licenses, or experience
+- nice_to_have_skills: list of bonus / preferred skills
+- certifications_required: list of required certifications or licenses (OSHA, PE, PMP, etc.)
+- years_experience_min: integer years of minimum required experience (0 if not specified)
+- location: short location string if it is clearly mentioned
+- other_hard_requirements: list of any other hard constraints (shift work, travel %, clearance, etc.)
+
+Project text:
+\"\"\"{job_text}\"\"\"
+
+Respond ONLY with a single JSON object and no extra commentary.
+"""
+
     try:
-        return json.loads(r.output[0].content[0].text)
+        resp = client.responses.create(
+            model=st.secrets.get("MODEL_NAME", "gpt-4.1-mini"),
+            input=[{"role": "user", "content": prompt}],
+            max_output_tokens=900,
+        )
+        raw = resp.output[0].content[0].text
+        data = json.loads(raw)
+
+        # Make sure all expected keys exist so rest of code doesn’t crash
+        return {
+            "title": data.get("title", ""),
+            "summary": data.get("summary", job_text[:1000]),
+            "must_have_skills": data.get("must_have_skills", []),
+            "nice_to_have_skills": data.get("nice_to_have_skills", []),
+            "certifications_required": data.get("certifications_required", []),
+            "years_experience_min": int(data.get("years_experience_min", 0) or 0),
+            "location": data.get("location", ""),
+            "other_hard_requirements": data.get("other_hard_requirements", []),
+        }
+
     except Exception:
-        return json.loads(getattr(r, "output_text", "{}") or "{}")
+        # Graceful fallback: simple keyword list
+        words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
+        return {
+            "title": "",
+            "summary": job_text[:1000],
+            "must_have_skills": words,
+            "nice_to_have_skills": [],
+            "certifications_required": [],
+            "years_experience_min": 0,
+            "location": "",
+            "other_hard_requirements": [],
+        }
+
 
 
 def llm_extract_profile(client, resume_text: str) -> Dict[str, Any]:
