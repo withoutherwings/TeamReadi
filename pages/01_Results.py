@@ -245,31 +245,82 @@ Respond ONLY with a single JSON object and no extra commentary.
 
 
 def llm_extract_profile(client, resume_text: str) -> Dict[str, Any]:
-    if not client:
+    """
+    Extract a structured candidate profile from a resume using the LLM.
+    Falls back to simple regex heuristics if the API is unavailable.
+    """
+    # Heuristic fallback if no client or empty resume
+    if not client or not (resume_text or "").strip():
         words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
-        emails = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", resume_text or "")
+        emails = re.findall(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            resume_text or "",
+        )
         return {
             "name": "",
             "emails": emails,
-            "summary": resume_text[:800],
+            "summary": (resume_text or "")[:800],
             "skills": words,
             "certifications": [],
             "roles": [],
             "years_experience": 0,
         }
-    prompt = "Extract candidate profile (name, emails, concise skills & certs, years).\n\nRESUME:\n" + (
-        resume_text or ""
-    )
-    r = client.responses.create(
-        model=st.secrets.get("MODEL_NAME", "gpt-4o-mini"),
-        input=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_schema", "json_schema": PROFILE_SCHEMA},
-        temperature=0,
-    )
+
+    prompt = f"""
+You are analyzing a construction industry resume.
+
+Read the resume text and return a JSON object with:
+- name: candidate name (string, may be empty if not obvious)
+- emails: list of email addresses found
+- summary: 2–4 sentence summary of their background
+- skills: list of 15–40 key skills / technologies / equipment / domains mentioned
+- certifications: list of licenses or certifications (PE, PMP, OSHA 30, etc.)
+- roles: list of typical role titles they have held (Project Manager, Superintendent, Estimator, Operator, etc.)
+- years_experience: integer estimate of total years of relevant experience
+
+Resume:
+\"\"\"{resume_text}\"\"\"
+
+Respond ONLY with a single JSON object and no extra commentary.
+"""
+
     try:
-        return json.loads(r.output[0].content[0].text)
+        resp = client.responses.create(
+            model=st.secrets.get("MODEL_NAME", "gpt-4.1-mini"),
+            input=[{"role": "user", "content": prompt}],
+            max_output_tokens=900,
+        )
+        raw = resp.output[0].content[0].text
+        data = json.loads(raw)
+
+        # Normalize / ensure keys so downstream code does not crash
+        return {
+            "name": data.get("name", ""),
+            "emails": data.get("emails", []),
+            "summary": data.get("summary", (resume_text or "")[:800]),
+            "skills": data.get("skills", []),
+            "certifications": data.get("certifications", []),
+            "roles": data.get("roles", []),
+            "years_experience": int(data.get("years_experience", 0) or 0),
+        }
+
     except Exception:
-        return json.loads(getattr(r, "output_text", "{}") or "{}")
+        # If anything goes wrong, fall back to regex extraction
+        words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
+        emails = re.findall(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            resume_text or "",
+        )
+        return {
+            "name": "",
+            "emails": emails,
+            "summary": (resume_text or "")[:800],
+            "skills": words,
+            "certifications": [],
+            "roles": [],
+            "years_experience": 0,
+        }
+
 
 
 def embed_text(client, text: str) -> List[float]:
