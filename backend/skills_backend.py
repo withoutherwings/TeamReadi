@@ -29,11 +29,7 @@ def _get_client() -> OpenAI | None:
     return OpenAI(api_key=key)
 
 
-# we will call this inside each function so it always sees the right key
-# instead of freezing a None client at import time.
-
-
-# ---------- Fallback helpers (used only if API fails) ----------
+# ---------- Fallback helpers (only if API really fails) ----------
 
 def _fallback_requirements(project_text: str) -> List[Dict[str, Any]]:
     text = (project_text or "").lower()
@@ -114,12 +110,25 @@ def extract_project_requirements(project_text: str) -> List[Dict[str, Any]]:
     prompt = f"""
 You are assisting with construction staffing for project pursuits.
 
-Given this project description, identify the 5–10 most important skills,
-credentials, or experience requirements that are explicitly or implicitly requested.
+You will read a construction project description or RFP and identify the 5–10
+most important SKILLS, CAPABILITIES, or EXPERIENCE requirements needed to staff the work.
+
+VERY IMPORTANT RULES FOR EACH REQUIREMENT:
+- It MUST be a multi-word capability phrase (at least 3 words, ideally 4–12).
+  Examples:
+    - "Experience managing state DOT highway resurfacing projects"
+    - "QA/QC documentation and submittal management"
+    - "Construction safety management and work zone traffic control"
+- It MUST NOT be:
+  - A single word (like "State" or "Transportation")
+  - A location (like "North Carolina" or "Utah")
+  - An agency or owner name (like "Department of Transportation")
+- Think in terms of what the PERSON must be able to do or know,
+  not who the OWNER is or where the project is located.
 
 For each requirement, return:
 - id: a short ID like "S1", "S2", ...
-- label: 4–10 word label
+- label: 3–12 word capability label (see examples above)
 - description: 1–2 sentence explanation
 - importance: 1 (nice to have), 2 (important), 3 (critical)
 
@@ -127,6 +136,7 @@ Project description:
 \"\"\"{project_text}\"\"\"
 
 Respond as JSON with a single key "requirements" whose value is a list of objects.
+Do not include any text outside the JSON.
 """
 
     try:
@@ -144,7 +154,8 @@ Respond as JSON with a single key "requirements" whose value is a list of object
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_output_tokens=700,
+            max_output_tokens=900,
+            temperature=0,
         )
 
         raw = resp.output[0].content[0].text or ""
@@ -157,18 +168,27 @@ Respond as JSON with a single key "requirements" whose value is a list of object
         if not isinstance(reqs, list) or not reqs:
             return _fallback_requirements(project_text)
 
+        def _good_label(lbl: str) -> bool:
+            words = [w for w in lbl.strip().split() if w]
+            # must be multi-word and not purely a location / owner style thing
+            return len(words) >= 3
+
         cleaned: List[Dict[str, Any]] = []
         for i, r in enumerate(reqs, start=1):
             if not isinstance(r, dict):
                 continue
+            label = str(r.get("label") or "").strip()
+            if not label or not _good_label(label):
+                continue  # drop junk like "State", "North", etc.
             cleaned.append(
                 {
                     "id": r.get("id") or f"S{i}",
-                    "label": r.get("label") or f"Requirement {i}",
+                    "label": label,
                     "description": r.get("description") or "",
                     "importance": int(r.get("importance") or 2),
                 }
             )
+
         return cleaned or _fallback_requirements(project_text)
 
     except Exception:
@@ -187,7 +207,7 @@ def score_resume_against_requirements(requirements: List[Dict[str, Any]], resume
     prompt = f"""
 You are matching a construction employee resume to project requirements.
 
-Project requirements (JSON array of requirements):
+Project requirements (JSON array of requirements objects):
 {req_json}
 
 Employee resume:
@@ -206,6 +226,7 @@ weighted by importance (3=critical, 2=important, 1=nice to have).
 Respond as JSON with:
 - "per_skill": list of {{id, label, match_status, evidence_snippet}}
 - "skill_match_pct": number
+Do not include any text outside the JSON.
 """
 
     try:
@@ -220,6 +241,7 @@ Respond as JSON with:
             ],
             response_format={"type": "json_object"},
             max_output_tokens=900,
+            temperature=0,
         )
 
         raw = resp.output[0].content[0].text or ""
