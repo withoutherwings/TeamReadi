@@ -131,42 +131,40 @@ Return ONLY JSON with:
 """
 
     try:
-        resp = client.responses.create(
-            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an expert in construction staffing. "
-                        "You classify candidates into role buckets and explain fit for a given project. "
-                        "Respond only with valid JSON."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_output_tokens=800,
-            temperature=0,
-        )
+    resp = client.chat.completions.create(
+        model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert in construction staffing. "
+                    "You classify candidates into role buckets and explain fit for a given project. "
+                    "Respond only with valid JSON."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
+        max_tokens=800,
+    )
 
-        raw = resp.output[0].content[0].text or ""
+    raw = resp.choices[0].message.content or ""
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return _fallback_role(resume_text)
-
-        bucket = data.get("bucket") or ""
-        if bucket not in ROLE_BUCKETS:
-            # sanitize to something known
-            bucket = "Out-of-scope"
-
-        return {
-            "bucket": bucket,
-            "role_title": data.get("role_title", "").strip() or "Unspecified role",
-            "project_fit_summary": data.get("project_fit_summary", "").strip() or "No detailed fit analysis provided.",
-            "unsuitable_reason": data.get("unsuitable_reason", "").strip(),
-        }
-
-    except Exception:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
         return _fallback_role(resume_text)
+
+    bucket = data.get("bucket") or ""
+    if bucket not in ROLE_BUCKETS:
+        bucket = "Out-of-scope"
+
+    return {
+        "bucket": bucket,
+        "role_title": data.get("role_title", "").strip() or "Unspecified role",
+        "project_fit_summary": data.get("project_fit_summary", "").strip() or "",
+        "unsuitable_reason": data.get("unsuitable_reason", "").strip(),
+    }
+
+except Exception:
+    return _fallback_role(resume_text)
