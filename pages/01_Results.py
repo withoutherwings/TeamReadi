@@ -17,6 +17,38 @@ from backend.roles_backend import infer_resume_role  # NEW: role inference
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
 st.title("TeamReadi — Ranked Results")
 
+# ---- Fast "Return to Start" (runs before any heavy work) ----
+
+RESET_KEYS = (
+    "resumes",
+    "req_files",
+    "req_url",
+    "cal_method",
+    "cal_link",
+    "cal_upload",
+    "start_date",
+    "end_date",
+    "workdays",
+    "max_hours",
+    "alpha",
+    "random_target",
+)
+
+if st.button("Return to Start"):
+    # Clear sensitive session values
+    for k in RESET_KEYS:
+        st.session_state.pop(k, None)
+
+    # Redirect to homepage
+    st.markdown(
+        "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
+        unsafe_allow_html=True,
+    )
+
+    # Stop execution so the heavy analysis block never runs
+    st.stop()
+
+
 # ---------- Helpers: files & text ----------
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -842,30 +874,4 @@ st.download_button(
     file_name="teamreadi_results.pdf",
     mime="application/pdf",
 )
-
-RESET_KEYS = (
-    "resumes",
-    "req_files",
-    "req_url",
-    "cal_method",
-    "cal_link",
-    "cal_upload",
-    "start_date",
-    "end_date",
-    "workdays",
-    "max_hours",
-    "alpha",
-    "random_target",
-)
-
-if st.button("Return to Start"):
-    # Clear sensitive session values
-    for k in RESET_KEYS:
-        st.session_state.pop(k, None)
-
-    # Redirect to homepage
-    st.markdown(
-        "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
-        unsafe_allow_html=True,
-    )
 
