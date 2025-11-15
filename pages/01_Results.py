@@ -849,6 +849,6 @@ def _reset_and_return():
     ):
         if k in st.session_state:
             del st.session_state[k]
-    st.switch_page("app.py")
+        st.switch_page("streamlit_app.py")
 
 st.button("Return to Start", on_click=_reset_and_return)
