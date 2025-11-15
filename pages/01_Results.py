@@ -2,7 +2,7 @@
 
 import os, io, re, json, requests
 import datetime as dt
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any
 
 import streamlit as st
 import pandas as pd
@@ -44,8 +44,6 @@ if st.button("Return to Start"):
         "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
         unsafe_allow_html=True,
     )
-
-    # Stop execution so the heavy analysis block never runs
     st.stop()
 
 
@@ -87,6 +85,7 @@ def read_text_from_url(url: str) -> str:
 def filename_stem(fname: str) -> str:
     return re.sub(r"\.[^.]+$", "", fname or "").strip()
 
+
 # ---------- Calendar math ----------
 
 def daterange_days(start: dt.datetime, end: dt.datetime):
@@ -96,10 +95,12 @@ def daterange_days(start: dt.datetime, end: dt.datetime):
         d += dt.timedelta(days=1)
 
 
-def total_work_hours(start: dt.datetime,
-                     end: dt.datetime,
-                     working_days: set,
-                     max_hours_per_day: int) -> int:
+def total_work_hours(
+    start: dt.datetime,
+    end: dt.datetime,
+    working_days: set[int],
+    max_hours_per_day: int,
+) -> int:
     total = 0
     for d in daterange_days(start, end):
         if d.weekday() in working_days:
@@ -111,24 +112,6 @@ def fetch_ics_bytes(url: str) -> bytes:
     r = requests.get(url, timeout=10)
     r.raise_for_status()
     return r.content
-
-
-def daterange_days(start: dt.datetime, end: dt.datetime):
-    d = start.date()
-    while d <= end.date():
-        yield d
-        d += dt.timedelta(days=1)
-
-
-def total_work_hours(start: dt.datetime,
-                     end: dt.datetime,
-                     working_days: set[int],
-                     max_hours_per_day: int) -> int:
-    total = 0
-    for d in daterange_days(start, end):
-        if d.weekday() in working_days:
-            total += max_hours_per_day
-    return total
 
 
 def busy_blocks_from_ics_for_employee(
@@ -259,7 +242,6 @@ def llm_extract_job(client, job_text: str) -> Dict[str, Any]:
     Falls back to a simple heuristic if the API is unavailable or JSON
     parsing fails.
     """
-    # Fallback if no client or no text
     if not client or not (job_text or "").strip():
         words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
         return {
@@ -301,7 +283,6 @@ Respond ONLY with a single JSON object and no extra commentary.
         raw = resp.output[0].content[0].text
         data = json.loads(raw)
 
-        # Make sure all expected keys exist so rest of code doesn’t crash
         return {
             "title": data.get("title", ""),
             "summary": data.get("summary", job_text[:1000]),
@@ -314,7 +295,6 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
     except Exception:
-        # Graceful fallback: simple keyword list
         words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
         return {
             "title": "",
@@ -328,13 +308,11 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
 
-
 def llm_extract_profile(client, resume_text: str) -> Dict[str, Any]:
     """
     Extract a structured candidate profile from a resume using the LLM.
     Falls back to simple regex heuristics if the API is unavailable.
     """
-    # Heuristic fallback if no client or empty resume
     if not client or not (resume_text or "").strip():
         words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
         emails = re.findall(
@@ -378,7 +356,6 @@ Respond ONLY with a single JSON object and no extra commentary.
         raw = resp.output[0].content[0].text
         data = json.loads(raw)
 
-        # Normalize / ensure keys so downstream code does not crash
         return {
             "name": data.get("name", ""),
             "emails": data.get("emails", []),
@@ -390,7 +367,6 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
     except Exception:
-        # If anything goes wrong, fall back to regex extraction
         words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
         emails = re.findall(
             r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
@@ -407,12 +383,12 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
 
-
 def embed_text(client, text: str) -> List[float]:
     if not client:
         return []
     e = client.embeddings.create(
-        model=st.secrets.get("EMBED_MODEL", "text-embedding-3-large"), input=(text or "")[:8000]
+        model=st.secrets.get("EMBED_MODEL", "text-embedding-3-large"),
+        input=(text or "")[:8000],
     )
     return e.data[0].embedding
 
@@ -427,6 +403,7 @@ def cosine(a: List[float], b: List[float]) -> float:
     nb = math.sqrt(sum(y * y for y in b))
     return (dot / (na * nb)) if na and nb else 0.0
 
+
 # ---------- PDF report ----------
 
 from reportlab.lib.pagesizes import LETTER
@@ -438,19 +415,25 @@ from reportlab.platypus import Table, TableStyle
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     """
     Build a multi-page PDF:
-      - Page 1: summary table of ranked candidates
-      - Subsequent pages: one section per candidate with narrative
+
+      - Page 1: ranked summary table
+      - Page 2 (+cont): project summary ("what the project asked for")
+      - Pages 3+: one page per candidate with narrative
     """
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     w, h = LETTER
 
     # Header helper
-    def header():
+    def header(subtitle: str | None = None):
         c.setFont("Helvetica-Bold", 16)
         c.drawString(72, h - 72, "TeamReadi — Ranked Results")
         c.setFont("Helvetica", 10)
-        c.drawString(72, h - 90, f"Window: {params.get('start_date')} to {params.get('end_date')}")
+        c.drawString(
+            72,
+            h - 90,
+            f"Window: {params.get('start_date')} to {params.get('end_date')}",
+        )
         c.drawString(
             72,
             h - 104,
@@ -458,24 +441,32 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             f"Max hrs/day: {params.get('max_hours')}   "
             f"α: {params.get('alpha')}",
         )
+        if subtitle:
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(72, h - 122, subtitle)
 
     # Simple text wrapper
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
-        lines, line = [], []
+        lines: List[str] = []
+        line: List[str] = []
+        cur_len = 0
         for w_ in words:
-            if sum(len(w) for w in line) + len(line) + len(w_) > width_chars:
-                lines.append(" ".join(line))
+            add_len = len(w_)
+            if cur_len + add_len + (1 if line else 0) > width_chars:
+                if line:
+                    lines.append(" ".join(line))
                 line = [w_]
+                cur_len = add_len
             else:
                 line.append(w_)
+                cur_len += add_len + (1 if line else 0)
         if line:
             lines.append(" ".join(line))
         return lines
 
-    # ----- Page 1: summary table -----
-    header()
-    y = h - 130
+    # ---------- PAGE 1: ranked summary table ----------
+    header(subtitle="Ranked candidate snapshot")
 
     data = [["Rank", "Candidate", "Role", "ReadiScore", "SkillFit", "Avail. hrs"]]
     for i, r in enumerate(results, start=1):
@@ -483,15 +474,15 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             [
                 i,
                 r["emp_id"],
-                r.get("role_title", ""),
+                (r.get("role_title", "") or "")[:40],
                 f"{int(r['readiscore'] * 100)}%",
                 f"{int(r['skillfit'] * 100)}%",
                 f"{r['hours']}",
             ]
         )
 
-    t = Table(data, colWidths=[40, 140, 160, 80, 80, 70])
-    t.setStyle(
+    table = Table(data, colWidths=[40, 120, 170, 80, 80, 70])
+    table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.05, 0.22, 0.37)),
@@ -504,77 +495,82 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             ]
         )
     )
-    wtbl, htbl = t.wrapOn(c, w - 144, h - 200)
-    t.drawOn(c, 72, y - htbl)
+    wtbl, htbl = table.wrapOn(c, w - 144, h - 200)
+    table.drawOn(c, 72, h - 160 - htbl)
     c.showPage()
 
-    # ----- Per-candidate pages -----
-    proj_summary = params.get("project_summary", "")
+    # ---------- PAGE 2: project summary ----------
+    proj_summary = params.get("project_summary", "") or ""
+    header(subtitle="What the project asked for")
 
-    for r in results:
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(72, h - 72, f"Candidate: {r['emp_id']} — {r.get('role_title','')}")
+    y = h - 140
+    c.setFont("Helvetica", 10)
+    if not proj_summary.strip():
+        proj_summary = "No structured project summary was available."
+
+    for line in wrap_text(proj_summary, 96):
+        if y < 80:
+            c.showPage()
+            header(subtitle="What the project asked for (cont.)")
+            y = h - 140
+            c.setFont("Helvetica", 10)
+        c.drawString(72, y, line)
+        y -= 14
+
+    c.showPage()
+
+    # ---------- PAGES 3+: one page per candidate ----------
+    for i, r in enumerate(results, start=1):
+        title = f"Candidate {i}: {r['emp_id']} — {r.get('role_title','')}"
+        header(subtitle=title)
+
+        y = h - 140
         c.setFont("Helvetica", 10)
         c.drawString(
             72,
-            h - 92,
-            f"Bucket: {r.get('role_bucket','')}   SkillFit: {int(r['skillfit']*100)}%   "
-            f"ReadiScore: {int(r['readiscore']*100)}%   Avail: {r['hours']} hrs",
+            y,
+            f"Bucket: {r.get('role_bucket','')}   "
+            f"ReadiScore: {int(r['readiscore']*100)}%   "
+            f"SkillFit: {int(r['skillfit']*100)}%   "
+            f"Availability: {r['hours']} hrs",
         )
+        y -= 24
 
-        y = h - 120
-
-        # What the project asked for
-        if proj_summary:
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "What the project asked for:")
-            y -= 16
-            c.setFont("Helvetica", 10)
-            for line in wrap_text(proj_summary, 96):
-                if y < 80:
-                    c.showPage()
-                    y = h - 72
-                    c.setFont("Helvetica", 10)
-                c.drawString(80, y, line)
-                y -= 14
-
-        # How this person fits
-        fit = r.get("project_fit_summary", "")
+        # Fit section
+        fit = r.get("project_fit_summary", "") or ""
         if fit:
-            y -= 10
-            if y < 80:
-                c.showPage()
-                y = h - 72
             c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "How this person could fit this project:")
+            c.drawString(72, y, "Why this candidate could fit this project:")
             y -= 16
             c.setFont("Helvetica", 10)
             for line in wrap_text(fit, 96):
                 if y < 80:
                     c.showPage()
-                    y = h - 72
+                    header(subtitle=title + " (cont.)")
+                    y = h - 100
                     c.setFont("Helvetica", 10)
                 c.drawString(80, y, line)
                 y -= 14
-
-        # Unsuitable reason (if any)
-        uns = r.get("unsuitable_reason", "")
-        if uns:
             y -= 10
-            if y < 80:
-                c.showPage()
-                y = h - 72
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "Why this person may not be suitable:")
-            y -= 16
-            c.setFont("Helvetica", 10)
+
+        # Gaps / risks
+        uns = (r.get("unsuitable_reason", "") or "").strip()
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Gaps / risks for this project:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        if uns:
             for line in wrap_text(uns, 96):
                 if y < 80:
                     c.showPage()
-                    y = h - 72
+                    header(subtitle=title + " (cont.)")
+                    y = h - 100
                     c.setFont("Helvetica", 10)
                 c.drawString(80, y, line)
                 y -= 14
+        else:
+            c.drawString(80, y, "No major gaps identified against top requirements.")
+            y -= 14
 
         c.showPage()
 
@@ -582,6 +578,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     pdf_bytes = buf.getvalue()
     buf.close()
     return pdf_bytes
+
 
 # ---------- Orchestrator (runs automatically) ----------
 
@@ -636,7 +633,6 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         prof = llm_extract_profile(client, text)
         prof_emb = embed_text(client, text)
 
-        # NEW: role inference (bucket + narrative)
         role_info = infer_resume_role(job_text, text)
 
         candidates.append(
@@ -718,13 +714,11 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         if one is provided. Assumes calendar events are tagged with something
         like 'Employee_001' in the SUMMARY line.
         """
-        # No calendar: fully available
         if not calendars:
             return window_baseline
 
-        cal_bytes = calendars[0]["_bytes"]  # single shared calendar
+        cal_bytes = calendars[0]["_bytes"]
 
-        # Try to extract something like 'Employee_001' from the filename stem
         m = re.search(r"Employee_\d+", emp_id)
         emp_tag = m.group(0) if m else emp_id
 
@@ -740,17 +734,10 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     results: List[Dict[str, Any]] = []
 
     for c in candidates:
-        # Embedding similarity between this resume and the job
         emb_sim = cosine(c["emb"], job_emb)
-
-        # SkillFit score
         skillfit = score_candidate(c["profile"], job_struct, emb_sim)
-
-        # Availability (hours remaining in the window)
         avail = availability_for_employee(c["id"])
         avail_frac = avail / max(window_baseline, 1)
-
-        # Blend into ReadiScore: α * skill + (1-α) * availability
         readiscore = alpha * skillfit + (1.0 - alpha) * avail_frac
 
         results.append(
@@ -767,9 +754,8 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         )
 
 
-# ---------- Render results (bucketed tiles + optional table) ----------
+# ---------- Render results (bucketed tiles only) ----------
 
-# Sort by ReadiScore descending
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
@@ -780,7 +766,7 @@ bucket_labels = {
     "Out-of-scope": "Out-of-scope / Not a fit",
 }
 
-# Group
+# Group by bucket
 grouped: Dict[str, List[Dict[str, Any]]] = {b: [] for b in BUCKET_ORDER}
 for r in results:
     b = r.get("role_bucket", "Out-of-scope")
@@ -801,9 +787,14 @@ for b in BUCKET_ORDER:
     for i, r in enumerate(group):
         col = cols[i % 4]
         with col:
-            short_fit = (r.get("project_fit_summary") or "").strip()
-            if len(short_fit) > 140:
-                short_fit = short_fit[:137] + "..."
+            # Build short preview text from the longer project_fit_summary
+            raw_fit = (r.get("project_fit_summary") or "")
+            phrases = [
+                p.strip()
+                for p in re.split(r"[.;]", raw_fit)
+                if 4 <= len(p.strip().split()) <= 10
+            ]
+            preview = " • ".join(phrases[:3]) or "(see full analysis in PDF)"
 
             st.markdown(
                 f"""
@@ -827,37 +818,18 @@ for b in BUCKET_ORDER:
     Available: {r["hours"]} hrs
   </div>
   <div style="font-size:0.75rem;margin-top:6px;opacity:0.9;">
-    {short_fit}
+    {preview}
   </div>
 </div>
 """,
                 unsafe_allow_html=True,
             )
 
-# Optional raw table
-df = pd.DataFrame(
-    [
-        {
-            "Rank": i + 1,
-            "Candidate": r["emp_id"],
-            "Role bucket": r["role_bucket"],
-            "Role title": r["role_title"],
-            "ReadiScore %": int(r["readiscore"] * 100),
-            "SkillFit %": int(r["skillfit"] * 100),
-            "Avail. hrs": r["hours"],
-        }
-        for i, r in enumerate(results)
-    ]
-)
-
-with st.expander("Show raw ranking table"):
-    st.dataframe(df, use_container_width=True)
-
 st.caption(
     "α blends SkillFit with Availability. Availability window and workday mask set on the previous page."
 )
 
-# ---------- PDF + Return ----------
+# ---------- PDF download ----------
 
 params = {
     "start_date": str(st.session_state.get("start_date")),
@@ -874,4 +846,3 @@ st.download_button(
     file_name="teamreadi_results.pdf",
     mime="application/pdf",
 )
-
