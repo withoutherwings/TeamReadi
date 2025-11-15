@@ -81,44 +81,97 @@ def fetch_ics_bytes(url: str) -> bytes:
     return r.content
 
 
-def busy_blocks_from_ics(ics_bytes: bytes,
-                         window_start: dt.datetime,
-                         window_end: dt.datetime,
-                         working_days: set) -> List[Tuple[dt.datetime, dt.datetime]]:
+def daterange_days(start: dt.datetime, end: dt.datetime):
+    d = start.date()
+    while d <= end.date():
+        yield d
+        d += dt.timedelta(days=1)
+
+
+def total_work_hours(start: dt.datetime,
+                     end: dt.datetime,
+                     working_days: set[int],
+                     max_hours_per_day: int) -> int:
+    total = 0
+    for d in daterange_days(start, end):
+        if d.weekday() in working_days:
+            total += max_hours_per_day
+    return total
+
+
+def busy_blocks_from_ics_for_employee(
+    ics_bytes: bytes,
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+    working_days: set[int],
+    emp_tag: str | None = None,
+) -> list[tuple[dt.datetime, dt.datetime]]:
+    """
+    Return merged busy blocks for a single employee, based on a shared calendar.
+
+    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY contains
+    that tag are counted as busy for this employee.
+    """
     cal = Calendar.from_ical(ics_bytes)
-    blocks = []
+    blocks: list[tuple[dt.datetime, dt.datetime]] = []
+
     for comp in cal.walk("VEVENT"):
         dtstart = comp.get("dtstart").dt
         dtend = comp.get("dtend").dt
+
+        # Filter by employee tag in the SUMMARY line, if requested
+        if emp_tag:
+            summary = str(comp.get("summary", ""))
+            if emp_tag not in summary:
+                continue
+
         if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
             dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
         if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
             dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
+
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
         if e > s and (s.weekday() in working_days or e.weekday() in working_days):
             blocks.append((s, e))
 
+    # merge overlaps
     blocks.sort(key=lambda x: x[0])
-    merged = []
+    merged: list[list[dt.datetime]] = []
     for s, e in blocks:
         if not merged or s > merged[-1][1]:
             merged.append([s, e])
         else:
             merged[-1][1] = max(merged[-1][1], e)
+
     return [(s, e) for s, e in merged]
 
 
-def remaining_hours_from_ics(ics_bytes: bytes,
-                             window_start: dt.datetime,
-                             window_end: dt.datetime,
-                             working_days: set,
-                             max_hours_per_day: int) -> int:
+def remaining_hours_for_employee(
+    ics_bytes: bytes,
+    emp_tag: str | None,
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+    working_days: set[int],
+    max_hours_per_day: int,
+) -> int:
+    """
+    Compute remaining hours for ONE employee, by filtering calendar events
+    using emp_tag (e.g. 'Employee_001').
+    """
     baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
-    busy = sum((e - s).total_seconds() for s, e in busy_blocks_from_ics(
-        ics_bytes, window_start, window_end, working_days
-    )) / 3600.0
-    return max(0, int(round(baseline - busy)))
+    if not ics_bytes:
+        return baseline
+
+    busy_secs = sum(
+        (e - s).total_seconds()
+        for s, e in busy_blocks_from_ics_for_employee(
+            ics_bytes, window_start, window_end, working_days, emp_tag
+        )
+    )
+    busy_hours = busy_secs / 3600.0
+    return max(0, int(round(baseline - busy_hours)))
+
 
 # ---------- LLM + embeddings ----------
 
