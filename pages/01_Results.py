@@ -691,9 +691,25 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         emb_sim = cosine(c["emb"], job_emb)
         skillfit = score_candidate(c["profile"], job_struct, emb_sim)
 
-        # availability
-        avail = avail_all
-        readiscore = alpha * skillfit + (1 - alpha) * avail_frac_all
+            # Availability: use shared calendar, filtered by employee tag
+    # Try to extract something like 'Employee_001' from the stem
+    m = re.search(r"Employee_\d+", c["id"])
+    emp_tag = m.group(0) if m else c["id"]
+
+    if calendars:
+        cal_bytes = calendars[0]["_bytes"]  # single shared calendar
+        avail = remaining_hours_for_employee(
+            cal_bytes,
+            emp_tag,
+            start_dt,
+            end_dt,
+            working_days,
+            max_hours,
+        )
+    else:
+        # No calendar: assume fully available in the window
+        avail = window_baseline
+
 
         results.append(
             {
