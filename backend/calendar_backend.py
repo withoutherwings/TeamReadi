@@ -289,13 +289,15 @@ Write 3–5 sentences:
 - Clear, factual, professional tone
 """
 
-    resp = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
-            {"role": "system", "content": "You generate professional staffing analytics summaries."},
-            {"role": "user", "content": prompt},
-        ],
-        max_output_tokens=220,
-    )
+resp = client.chat.completions.create(
+    model="gpt-4.1-mini",
+    messages=[
+        {"role": "system", "content": "You generate professional staffing analytics summaries."},
+        {"role": "user", "content": prompt},
+    ],
+    temperature=0,
+    max_tokens=220,
+)
 
-    return resp.output[0].content[0].text
+return resp.choices[0].message.content
+
