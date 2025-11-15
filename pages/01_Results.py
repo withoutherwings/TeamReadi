@@ -843,23 +843,29 @@ st.download_button(
     mime="application/pdf",
 )
 
-def _reset_and_return():
-    for k in (
-        "resumes",
-        "req_files",
-        "req_url",
-        "cal_method",
-        "cal_link",
-        "random_target",
-        "cal_upload",
-        "start_date",
-        "end_date",
-        "workdays",
-        "max_hours",
-        "alpha",
-    ):
-        if k in st.session_state:
-            del st.session_state[k]
-        st.switch_page("streamlit_app.py")
+RESET_KEYS = (
+    "resumes",
+    "req_files",
+    "req_url",
+    "cal_method",
+    "cal_link",
+    "cal_upload",
+    "start_date",
+    "end_date",
+    "workdays",
+    "max_hours",
+    "alpha",
+    "random_target",
+)
 
-st.button("Return to Start", on_click=_reset_and_return)
+if st.button("Return to Start"):
+    # Clear sensitive session values
+    for k in RESET_KEYS:
+        st.session_state.pop(k, None)
+
+    # Redirect to homepage
+    st.markdown(
+        "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
+        unsafe_allow_html=True,
+    )
+
