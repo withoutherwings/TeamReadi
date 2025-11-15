@@ -182,62 +182,63 @@ Rules:
 # ---------- Resume scoring ----------
 
 def score_resume_against_requirements(requirements: List[Dict[str, Any]], resume_text: str) -> Dict[str, Any]:
+    """
+    Compare resume against project requirements using the LLM.
+    Response JSON format:
+    {
+      "per_skill": [
+        {"id": "S1", "label": "...", "match_status": "strong_match|partial_match|no_match", "evidence_snippet": "..."},
+        ...
+      ],
+      "skill_match_pct": number
+    }
+    """
     client = _get_client()
-    if not client:
+    if not client or not resume_text.strip():
         return _fallback_resume_score(requirements, resume_text)
 
     req_json = json.dumps(requirements)
 
-    prompt = f"""
-You are matching a construction employee resume to project requirements.
+    system_msg = (
+        "You evaluate construction resumes against project requirements. "
+        "Respond only with valid JSON: {\"per_skill\": [...], \"skill_match_pct\": number}."
+    )
 
-Project requirements (JSON array of requirements objects):
+    user_prompt = f"""
+Project requirements (JSON):
 {req_json}
 
-Employee resume:
+Resume:
 \"\"\"{resume_text}\"\"\"
 
-For EACH requirement, decide:
-- match_status: "strong_match", "partial_match", or "no_match"
-- evidence_snippet: short phrase or sentence from the resume that supports your decision (if any).
-
-Then compute an overall skill_match_pct from 0–100, where:
-- strong_match ≈ full credit
-- partial_match ≈ half credit
-- no_match ≈ zero credit,
-weighted by importance (3=critical, 2=important, 1=nice to have).
-
-Respond as JSON with:
-- "per_skill": list of {{id, label, match_status, evidence_snippet}}
-- "skill_match_pct": number
-Do not include any text outside the JSON.
+Rules:
+- For EACH requirement, assign:
+    - strong_match  = full credit
+    - partial_match = half credit
+    - no_match      = zero credit
+- Provide 1 evidence_snippet for strong/partial matches
+- skill_match_pct is weighted by requirement.importance (1,2,3)
 """
 
     try:
-       resp = client.chat.completions.create(
-    model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-    messages=[
-        {
-            "role": "system",
-            "content": "You evaluate resumes against project requirements and respond ONLY with JSON.",
-        },
-        {"role": "user", "content": prompt},
-    ],
-    temperature=0,
-    max_tokens=900,
-)
+        resp = client.chat.completions.create(
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=900,
+        )
 
-raw = resp.choices[0].message.content or ""
-try:
-    data = json.loads(raw)
-except json.JSONDecodeError:
-    return _fallback_resume_score(requirements, resume_text)
+        raw = resp.choices[0].message.content or ""
+        data = json.loads(raw)
 
-if "per_skill" not in data or "skill_match_pct" not in data:
-    return _fallback_resume_score(requirements, resume_text)
+        # Validate structure
+        if "per_skill" not in data or "skill_match_pct" not in data:
+            return _fallback_resume_score(requirements, resume_text)
 
-return data
-
+        return data
 
     except Exception:
         return _fallback_resume_score(requirements, resume_text)
