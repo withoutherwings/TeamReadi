@@ -97,94 +97,78 @@ def _fallback_resume_score(requirements: List[Dict[str, Any]], resume_text: str)
 
 def extract_project_requirements(project_text: str) -> List[Dict[str, Any]]:
     """
-    Returns a list like:
+    Use the LLM to extract 5–10 workforce requirements from the project description.
+    Falls back to heuristics only if the LLM fails.
+    Output format:
     [
-        {"id": "S1", "label": "...", "description": "...", "importance": 1-3},
-        ...
+      {"id": "S1", "label": "...", "description": "...", "importance": 1–3},
+      ...
     ]
     """
     client = _get_client()
-    if not client or not project_text or not project_text.strip():
+    if not client or not project_text.strip():
         return _fallback_requirements(project_text)
 
-    prompt = f"""
-You are assisting with construction staffing for project pursuits.
+    system_msg = (
+        "You extract staffing requirements from construction project descriptions and RFPs. "
+        "Return only JSON — no markdown — in the format {\"requirements\": [...]}."
+    )
 
-You will read a construction project description or RFP and identify the 5–10
-most important SKILLS, CAPABILITIES, or EXPERIENCE requirements needed to staff the work.
-
-VERY IMPORTANT RULES FOR EACH REQUIREMENT:
-- It MUST be a multi-word capability phrase (at least 3 words, ideally 4–12).
-  Examples:
-    - "Experience managing state DOT highway resurfacing projects"
-    - "QA/QC documentation and submittal management"
-    - "Construction safety management and work zone traffic control"
-- It MUST NOT be:
-  - A single word (like "State" or "Transportation")
-  - A location (like "North Carolina" or "Utah")
-  - An agency or owner name (like "Department of Transportation")
-- Think in terms of what the PERSON must be able to do or know,
-  not who the OWNER is or where the project is located.
-
-For each requirement, return:
-- id: a short ID like "S1", "S2", ...
-- label: 3–12 word capability label (see examples above)
-- description: 1–2 sentence explanation
-- importance: 1 (nice to have), 2 (important), 3 (critical)
-
-Project description:
+    user_prompt = f"""
+Project Description / Scope:
 \"\"\"{project_text}\"\"\"
 
-Respond as JSON with a single key "requirements" whose value is a list of objects.
-Do not include any text outside the JSON.
+
+Return exactly this JSON schema:
+{{
+  "requirements": [
+    {{
+      "id": "S1",
+      "label": "4–12 word capability phrase (NOT a location or agency name)",
+      "description": "1–2 sentence explanation of what the project needs",
+      "importance": 1 | 2 | 3
+    }},
+    ...
+  ]
+}}
+
+Rules:
+- 5–10 items
+- Must be multi-word capability phrases (3+ words minimum, ideally 4–12)
+- Must describe what a PERSON must know or be able to do
+- No locations, owners, agencies, contractors, or dates as labels
+- At least 2 items must have importance = 3
 """
 
     try:
-resp = client.chat.completions.create(
-    model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-    messages=[
-        {
-            "role": "system",
-            "content": (
-                "You extract staffing requirements from construction RFPs. "
-                "Always respond with valid JSON: {\"requirements\": [...]} and nothing else."
-            ),
-        },
-        {"role": "user", "content": prompt},
-    ],
-    temperature=0,
-    max_tokens=900,
-)
+        resp = client.chat.completions.create(
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=900,
+        )
 
-raw = resp.choices[0].message.content or ""
-try:
-    data = json.loads(raw)
-except json.JSONDecodeError:
-    return _fallback_requirements(project_text)
-
+        raw = resp.choices[0].message.content or ""
+        data = json.loads(raw)
 
         reqs = data.get("requirements", [])
         if not isinstance(reqs, list) or not reqs:
             return _fallback_requirements(project_text)
 
-        def _good_label(lbl: str) -> bool:
-            words = [w for w in lbl.strip().split() if w]
-            # must be multi-word and not purely a location / owner style thing
-            return len(words) >= 3
-
-        cleaned: List[Dict[str, Any]] = []
+        cleaned = []
         for i, r in enumerate(reqs, start=1):
-            if not isinstance(r, dict):
+            label = str(r.get("label", "")).strip()
+            if not label or len(label.split()) < 3:
                 continue
-            label = str(r.get("label") or "").strip()
-            if not label or not _good_label(label):
-                continue  # drop junk like "State", "North", etc.
             cleaned.append(
                 {
                     "id": r.get("id") or f"S{i}",
                     "label": label,
-                    "description": r.get("description") or "",
-                    "importance": int(r.get("importance") or 2),
+                    "description": r.get("description", "").strip(),
+                    "importance": int(r.get("importance", 2) or 2),
                 }
             )
 
@@ -192,6 +176,7 @@ except json.JSONDecodeError:
 
     except Exception:
         return _fallback_requirements(project_text)
+
 
 
 # ---------- Resume scoring ----------
