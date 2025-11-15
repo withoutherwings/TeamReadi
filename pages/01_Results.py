@@ -9,6 +9,7 @@ import fitz                    # PyMuPDF
 from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
+from bs4 import BeautifulSoup
 
 from backend.roles_backend import infer_resume_role
 
@@ -59,12 +60,27 @@ def extract_text_from_any(upload) -> str:
 
 
 def read_text_from_url(url: str) -> str:
+    """
+    Fetch an RFP/job webpage and extract readable text,
+    stripping scripts, styles, nav, etc.
+    """
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        return r.text
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # Remove non-content elements
+        for tag in soup(["script", "style", "meta", "noscript", "header", "footer", "nav", "form"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True)
+
+        # Trim very long pages to keep prompts sane
+        return text[:20000]
     except Exception:
         return ""
+
 
 
 def filename_stem(fname: str) -> str:
@@ -671,16 +687,22 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
-    # Build job text (files + url)
-    job_parts = []
-    for f in req_files:
-        job_parts.append(extract_text_from_any(f))
-    if req_url:
-        job_parts.append(read_text_from_url(req_url))
-    job_text = "\n\n".join([p for p in job_parts if p])
+    # Build job text: prefer uploaded files; otherwise use URL
+    if req_files:
+        job_parts = [extract_text_from_any(f) for f in req_files]
+        job_text = "\n\n".join(p for p in job_parts if p)
+    elif req_url:
+        job_text = read_text_from_url(req_url)
+    else:
+        job_text = ""
+
+    if not job_text.strip():
+        st.error("Please upload a project requirements file or paste a valid job / RFP URL.")
+        st.stop()
 
     # LLM client
     client = get_openai()
+
 
     # Extract job struct + embedding
     job_struct = llm_extract_job(client, job_text)
