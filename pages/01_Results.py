@@ -649,56 +649,54 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
             }
         )
 
-    # If no calendars, availability = baseline
+    # If no calendars, availability = baseline (full work window)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
-
-    # For now, we assume one shared calendar → same availability for all,
-    # OR no calendar → full baseline.
-    # (You can extend with per-employee mapping later.)
-    def availability_for_candidate() -> int:
-        if calendars:
-            return remaining_hours_from_ics(
-                calendars[0]["_bytes"], start_dt, end_dt, working_days, max_hours
-            )
-        return window_baseline
 
     # Compute availability and skill fit; blend to ReadiScore
     def score_candidate(profile: Dict[str, Any], job: Dict[str, Any], emb_sim: float) -> float:
         must = set(s.lower() for s in job.get("must_have_skills", []))
         skills = set(s.lower() for s in profile.get("skills", []))
+
+        # If there are must-have skills and none overlap, skillfit = 0
         if must and not (must & skills):
             base = 0.0
         else:
             mh_overlap = len(must & skills) / max(len(must), 1) if must else 0.6
+
             cert_req = set(s.lower() for s in job.get("certifications_required", []))
             certs = set(s.lower() for s in profile.get("certifications", []))
             cert_match = 1.0 if (not cert_req or cert_req.issubset(certs)) else 0.0
+
             years_ok = 1.0
             if job.get("years_experience_min", 0) > 0:
                 years_ok = (
                     1.0
-                    if profile.get("years_experience", 0) >= job["years_experience_min"]
+                    if profile.get("years_experience", 0)
+                    >= job["years_experience_min"]
                     else 0.6
                 )
+
             base = (0.5 * mh_overlap + 0.2 * cert_match + 0.3 * emb_sim) * years_ok
+
         return max(0.0, min(1.0, base))
 
-    results: List[Dict[str, Any]] = []
-    avail_all = availability_for_candidate()
-    avail_frac_all = avail_all / max(window_baseline, 1)
+    def availability_for_employee(emp_id: str) -> int:
+        """
+        Compute remaining hours for this employee ID using the shared calendar,
+        if one is provided. Assumes calendar events are tagged with something
+        like 'Employee_001' in the SUMMARY line.
+        """
+        # No calendar: fully available
+        if not calendars:
+            return window_baseline
 
-    for c in candidates:
-        emb_sim = cosine(c["emb"], job_emb)
-        skillfit = score_candidate(c["profile"], job_struct, emb_sim)
-
-            # Availability: use shared calendar, filtered by employee tag
-    # Try to extract something like 'Employee_001' from the stem
-    m = re.search(r"Employee_\d+", c["id"])
-    emp_tag = m.group(0) if m else c["id"]
-
-    if calendars:
         cal_bytes = calendars[0]["_bytes"]  # single shared calendar
-        avail = remaining_hours_for_employee(
+
+        # Try to extract something like 'Employee_001' from the filename stem
+        m = re.search(r"Employee_\d+", emp_id)
+        emp_tag = m.group(0) if m else emp_id
+
+        return remaining_hours_for_employee(
             cal_bytes,
             emp_tag,
             start_dt,
@@ -706,10 +704,22 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
             working_days,
             max_hours,
         )
-    else:
-        # No calendar: assume fully available in the window
-        avail = window_baseline
 
+    results: List[Dict[str, Any]] = []
+
+    for c in candidates:
+        # Embedding similarity between this resume and the job
+        emb_sim = cosine(c["emb"], job_emb)
+
+        # SkillFit score
+        skillfit = score_candidate(c["profile"], job_struct, emb_sim)
+
+        # Availability (hours remaining in the window)
+        avail = availability_for_employee(c["id"])
+        avail_frac = avail / max(window_baseline, 1)
+
+        # Blend into ReadiScore: α * skill + (1-α) * availability
+        readiscore = alpha * skillfit + (1.0 - alpha) * avail_frac
 
         results.append(
             {
@@ -723,6 +733,7 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
                 "unsuitable_reason": c["unsuitable_reason"],
             }
         )
+
 
 # ---------- Render results (bucketed tiles + optional table) ----------
 
