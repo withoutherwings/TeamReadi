@@ -73,98 +73,62 @@ def _fallback_role(resume_text: str) -> Dict[str, Any]:
 
 def infer_resume_role(job_text: str, resume_text: str) -> Dict[str, Any]:
     """
-    Given the full project description (job_text) and a single resume text,
-    infer:
-      - which ROLE BUCKET the person belongs in
-      - a human-readable role title
-      - a short memo about how they fit (or don't fit) this project
-
-    Returns a dict:
-    {
-        "bucket": "PM/Admin" | "Support/Coordination" | "Field/Operator" | "Out-of-scope",
-        "role_title": "Project Engineer / APM",
-        "project_fit_summary": "Short narrative about fit.",
-        "unsuitable_reason": "If not suitable, why."
-    }
+    Given the full project description (job_text) and resume text,
+    infer the correct role bucket + role title + project-fit narrative.
+    Always returns a JSON-safe dict, falling back to heuristics if LLM fails.
     """
     client = _get_client()
     if not client:
         return _fallback_role(resume_text)
 
-    prompt = f"""
-You are assisting with staffing for a construction project.
+    system_msg = (
+        "You are an expert in construction staffing. "
+        "You classify candidates into role buckets and explain fit for a given project. "
+        "Return ONLY valid JSON — no markdown, no commentary."
+    )
 
-First, read the PROJECT DESCRIPTION and understand what types of ROLES and responsibilities it requires.
-
-Then, read the RESUME and infer what kind of role this person actually fits.
-
-You must:
-1. Assign the candidate to ONE of these buckets:
-   - "PM/Admin"            (project manager, assistant PM, project engineer, construction admin)
-   - "Support/Coordination" (operations supervisor, logistics, documentation support, safety-only roles)
-   - "Field/Operator"      (laborer, equipment operator, crew member, working hands-on in the field)
-   - "Out-of-scope"        (experience not relevant to construction project staffing)
-
-2. Suggest a concise role_title describing what they would realistically be hired as
-   (e.g., "Assistant Project Manager", "Traffic Control Coordinator (trainable)", "General Labor (trainable)").
-
-3. Write a project_fit_summary explaining:
-   - What the project is asking for in plain language
-   - How this person's background DOES or DOES NOT align with that
-   - Whether you'd consider them for any role on this project, and if so which one.
-
-4. If they are not really suitable for this project at all, include a clear unsuitable_reason.
-
+    user_prompt = f"""
 PROJECT DESCRIPTION:
 \"\"\"{job_text}\"\"\"
+
 
 RESUME:
 \"\"\"{resume_text}\"\"\"
 
-Return ONLY JSON with:
+
+You MUST return JSON shaped exactly like this:
 {{
-  "bucket": "...",
-  "role_title": "...",
-  "project_fit_summary": "...",
-  "unsuitable_reason": "..."   // empty string if suitable
+  "bucket": "PM/Admin" | "Support/Coordination" | "Field/Operator" | "Out-of-scope",
+  "role_title": "short human-readable job title",
+  "project_fit_summary": "3–6 sentences describing exactly how the person fits or doesn't fit this project",
+  "unsuitable_reason": "reason if not suitable, otherwise empty string"
 }}
 """
 
     try:
-    resp = client.chat.completions.create(
-        model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert in construction staffing. "
-                    "You classify candidates into role buckets and explain fit for a given project. "
-                    "Respond only with valid JSON."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0,
-        max_tokens=800,
-    )
+        resp = client.chat.completions.create(
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=800,
+            temperature=0,
+        )
 
-    raw = resp.choices[0].message.content or ""
+        raw = resp.choices[0].message.content or ""
+        data = json.loads(raw)  # throws JSONDecodeError if malformed
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+        bucket = data.get("bucket", "")
+        if bucket not in ROLE_BUCKETS:
+            bucket = "Out-of-scope"
+
+        return {
+            "bucket": bucket,
+            "role_title": data.get("role_title", "").strip() or "Unspecified role",
+            "project_fit_summary": data.get("project_fit_summary", "").strip(),
+            "unsuitable_reason": data.get("unsuitable_reason", "").strip(),
+        }
+
+    except Exception:
         return _fallback_role(resume_text)
-
-    bucket = data.get("bucket") or ""
-    if bucket not in ROLE_BUCKETS:
-        bucket = "Out-of-scope"
-
-    return {
-        "bucket": bucket,
-        "role_title": data.get("role_title", "").strip() or "Unspecified role",
-        "project_fit_summary": data.get("project_fit_summary", "").strip() or "",
-        "unsuitable_reason": data.get("unsuitable_reason", "").strip(),
-    }
-
-except Exception:
-    return _fallback_role(resume_text)
