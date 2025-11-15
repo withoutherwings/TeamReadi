@@ -1,31 +1,23 @@
-# pages/01_Results.py — ReadiReport Ranked Results + Roles + PDF narrative
+# pages/01_Results.py — ReadiReport (tiles + PDF)
 
 import os, io, re, json, requests
 import datetime as dt
 from typing import List, Dict, Any
 
 import streamlit as st
+import pandas as pd
 import fitz                    # PyMuPDF
 from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
 
-from backend.roles_backend import infer_resume_role
-from backend.skills_backend import (
-    extract_project_requirements,
-    score_resume_against_requirements,
-)
-
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
+from backend.roles_backend import infer_resume_role  # role inference
 
 # ---------- UI shell ----------
-st.set_page_config(page_title="ReadiReport — Results", layout="wide")
-st.title("ReadiReport — Ranked Results")
+st.set_page_config(page_title="ReadiReport", layout="wide")
+st.title("ReadiReport")
 
-# ---- Fast "Return to Start" (runs before any heavy work) ----
+# ---- Session / fast "Return to Start" handling ----
 
 RESET_KEYS = (
     "resumes",
@@ -42,18 +34,16 @@ RESET_KEYS = (
     "random_target",
 )
 
-if st.button("Return to Start"):
-    # Clear sensitive session values
+# If a prior click on "Return to Start" set this flag, clear and redirect
+if st.session_state.get("go_home", False):
     for k in RESET_KEYS:
         st.session_state.pop(k, None)
-
-    # Redirect to homepage
+    st.session_state["go_home"] = False
     st.markdown(
         "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
         unsafe_allow_html=True,
     )
     st.stop()
-
 
 # ---------- Helpers: files & text ----------
 
@@ -94,6 +84,16 @@ def filename_stem(fname: str) -> str:
     return re.sub(r"\.[^.]+$", "", fname or "").strip()
 
 
+def clean_emp_label(stem: str) -> str:
+    """
+    Turn 'Employee_004 Resume — Construction Manager'
+    into 'Employee_004'.
+    """
+    if not stem:
+        return stem
+    s = re.sub(r"\s*resume.*$", "", stem, flags=re.IGNORECASE).strip()
+    return s or stem
+
 # ---------- Calendar math ----------
 
 def daterange_days(start: dt.datetime, end: dt.datetime):
@@ -103,12 +103,10 @@ def daterange_days(start: dt.datetime, end: dt.datetime):
         d += dt.timedelta(days=1)
 
 
-def total_work_hours(
-    start: dt.datetime,
-    end: dt.datetime,
-    working_days: set[int],
-    max_hours_per_day: int,
-) -> int:
+def total_work_hours(start: dt.datetime,
+                     end: dt.datetime,
+                     working_days: set[int],
+                     max_hours_per_day: int) -> int:
     total = 0
     for d in daterange_days(start, end):
         if d.weekday() in working_days:
@@ -131,8 +129,9 @@ def busy_blocks_from_ics_for_employee(
 ) -> list[tuple[dt.datetime, dt.datetime]]:
     """
     Return merged busy blocks for a single employee, based on a shared calendar.
-    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY
-    contains that tag are counted as busy for this employee.
+
+    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY contains
+    that tag are counted as busy for this employee.
     """
     cal = Calendar.from_ical(ics_bytes)
     blocks: list[tuple[dt.datetime, dt.datetime]] = []
@@ -195,7 +194,7 @@ def remaining_hours_for_employee(
     return max(0, int(round(baseline - busy_hours)))
 
 
-# ---------- LLM client + job/profile extraction ----------
+# ---------- LLM + embeddings ----------
 
 def get_openai():
     from openai import OpenAI
@@ -203,30 +202,64 @@ def get_openai():
     return OpenAI(api_key=api_key) if api_key else None
 
 
-def _job_fallback(job_text: str) -> Dict[str, Any]:
-    """
-    Fallback if OpenAI is unavailable: keep a *short* generic summary so
-    we don't paste pages of instructions into the PDF.
-    """
-    words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
-    return {
-        "title": "",
-        "summary": "Summary unavailable (offline mode). See source RFP / project docs.",
-        "must_have_skills": words,
-        "nice_to_have_skills": [],
-        "certifications_required": [],
-        "years_experience_min": 0,
-        "location": "",
-        "other_hard_requirements": [],
-    }
+JOB_SCHEMA = {
+    "name": "JobSpec",
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "must_have_skills": {"type": "array", "items": {"type": "string"}},
+            "nice_to_have_skills": {"type": "array", "items": {"type": "string"}},
+            "certifications_required": {"type": "array", "items": {"type": "string"}},
+            "years_experience_min": {"type": "integer"},
+            "location": {"type": "string"},
+            "other_hard_requirements": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["must_have_skills"],
+    },
+    "strict": True,
+}
+
+PROFILE_SCHEMA = {
+    "name": "CandidateProfile",
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string"},
+            "emails": {"type": "array", "items": {"type": "string"}},
+            "summary": {"type": "string"},
+            "skills": {"type": "array", "items": {"type": "string"}},
+            "certifications": {"type": "array", "items": {"type": "string"}},
+            "roles": {"type": "array", "items": {"type": "string"}},
+            "years_experience": {"type": "integer"},
+        },
+        "required": ["skills"],
+    },
+    "strict": True,
+}
 
 
 def llm_extract_job(client, job_text: str) -> Dict[str, Any]:
     """
     Use the LLM to summarize the project / RFP into a structured spec.
+    Falls back to a simple heuristic if the API is unavailable or JSON
+    parsing fails.
     """
     if not client or not (job_text or "").strip():
-        return _job_fallback(job_text)
+        words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
+        return {
+            "title": "",
+            "summary": job_text[:1000],
+            "must_have_skills": words,
+            "nice_to_have_skills": [],
+            "certifications_required": [],
+            "years_experience_min": 0,
+            "location": "",
+            "other_hard_requirements": [],
+        }
 
     prompt = f"""
 You are helping a construction firm understand an RFP or job posting.
@@ -258,7 +291,7 @@ Respond ONLY with a single JSON object and no extra commentary.
 
         return {
             "title": data.get("title", ""),
-            "summary": data.get("summary", "") or _job_fallback(job_text)["summary"],
+            "summary": data.get("summary", job_text[:1000]),
             "must_have_skills": data.get("must_have_skills", []),
             "nice_to_have_skills": data.get("nice_to_have_skills", []),
             "certifications_required": data.get("certifications_required", []),
@@ -268,12 +301,23 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
     except Exception:
-        return _job_fallback(job_text)
+        words = sorted(set(re.findall(r"[A-Za-z]{3,}", (job_text or "").lower())))[:20]
+        return {
+            "title": "",
+            "summary": job_text[:1000],
+            "must_have_skills": words,
+            "nice_to_have_skills": [],
+            "certifications_required": [],
+            "years_experience_min": 0,
+            "location": "",
+            "other_hard_requirements": [],
+        }
 
 
 def llm_extract_profile(client, resume_text: str) -> Dict[str, Any]:
     """
-    Extract a structured candidate profile from a resume.
+    Extract a structured candidate profile from a resume using the LLM.
+    Falls back to simple regex heuristics if the API is unavailable.
     """
     if not client or not (resume_text or "").strip():
         words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
@@ -329,7 +373,6 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
     except Exception:
-        # Fallback to simple regex extraction
         words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
         emails = re.findall(
             r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
@@ -346,40 +389,65 @@ Respond ONLY with a single JSON object and no extra commentary.
         }
 
 
+def embed_text(client, text: str) -> List[float]:
+    if not client:
+        return []
+    e = client.embeddings.create(
+        model=st.secrets.get("EMBED_MODEL", "text-embedding-3-large"),
+        input=(text or "")[:8000],
+    )
+    return e.data[0].embedding
+
+
+def cosine(a: List[float], b: List[float]) -> float:
+    if not a or not b:
+        return 0.0
+    import math
+
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return (dot / (na * nb)) if na and nb else 0.0
+
+
 # ---------- PDF report ----------
+
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+
 
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     """
     Build a multi-page PDF:
-      - Page 1: summary table of ranked candidates
-      - Subsequent pages: one section per candidate with narrative
+      - Page 1: project summary + recommended roles
+      - Subsequent pages: one page per candidate with bullet-style assessment
     """
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     w, h = LETTER
 
-    # Header helper for page 1
     def header():
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(72, h - 72, "ReadiReport — Ranked Results")
-        c.setFont("Helvetica", 10)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(72, h - 72, "ReadiReport")
+        c.setFont("Helvetica", 9)
         c.drawString(
             72,
-            h - 90,
+            h - 88,
             f"Window: {params.get('start_date')} to {params.get('end_date')}",
         )
         c.drawString(
             72,
-            h - 104,
+            h - 100,
             f"Workdays: {', '.join(params.get('workdays', []))}   "
             f"Max hrs/day: {params.get('max_hours')}   "
             f"α: {params.get('alpha')}",
         )
 
-    # Simple text wrapper
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
-        lines, line = [], []
+        lines: List[str] = []
+        line: List[str] = []
         for w_ in words:
             if sum(len(w) for w in line) + len(line) + len(w_) > width_chars:
                 lines.append(" ".join(line))
@@ -390,112 +458,203 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             lines.append(" ".join(line))
         return lines
 
-    # ----- Page 1: summary table -----
+    # ----- Page 1: project summary / roles -----
     header()
     y = h - 130
 
-    data = [["Rank", "Candidate", "Role", "ReadiScore", "SkillFit", "Avail. hrs"]]
-    for i, r in enumerate(results, start=1):
-        data.append(
-            [
-                i,
-                r["emp_id"],
-                r.get("role_title", ""),
-                f"{int(r['readiscore'] * 100)}%",
-                f"{int(r['skillfit'] * 100)}%",
-                f"{r['hours']}",
-            ]
-        )
-
-    t = Table(data, colWidths=[40, 140, 160, 80, 80, 70])
-    t.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.05, 0.22, 0.37)),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-                ("ALIGN", (3, 1), (-1, -1), "CENTER"),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
-            ]
-        )
-    )
-    wtbl, htbl = t.wrapOn(c, w - 144, h - 200)
-    t.drawOn(c, 72, y - htbl)
-    c.showPage()
-
-    # ----- Per-candidate pages -----
     proj_summary = params.get("project_summary", "")
 
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(72, y, "Project Summary:")
+    y -= 18
+    c.setFont("Helvetica", 10)
+    if proj_summary:
+        for line in wrap_text(proj_summary, 95):
+            if y < 72:
+                c.showPage()
+                header()
+                y = h - 120
+                c.setFont("Helvetica", 10)
+            c.drawString(72, y, line)
+            y -= 13
+    else:
+        c.drawString(72, y, "No project description text was provided.")
+        y -= 13
+
+    y -= 10
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(72, y, "Recommended roles for this project")
+    y -= 16
+    c.setFont("Helvetica", 10)
+
+    bucket_counts: Dict[str, int] = {}
     for r in results:
+        b = r.get("role_bucket", "Unspecified")
+        bucket_counts[b] = bucket_counts.get(b, 0) + 1
+
+    if bucket_counts:
+        for bucket, count in bucket_counts.items():
+            line = f"- {bucket} ({count} candidate{'s' if count != 1 else ''} matched)"
+            if y < 72:
+                c.showPage()
+                header()
+                y = h - 120
+                c.setFont("Helvetica", 10)
+            c.drawString(80, y, line)
+            y -= 13
+    else:
+        c.drawString(72, y, "- No candidate roles inferred.")
+        y -= 13
+
+    c.showPage()
+
+    # ----- Candidate pages -----
+    baseline = float(params.get("window_baseline", 0) or 0)
+
+    for rank, r in enumerate(results, start=1):
+        header()
+        y = h - 130
+
+        label = r.get("label", r["emp_id"])
+
         c.setFont("Helvetica-Bold", 14)
-        c.drawString(72, h - 72, f"{r['emp_id']}")
-        c.setFont("Helvetica", 11)
-        c.drawString(72, h - 88, f"Optimal role: {r.get('role_title','')}")
+        c.drawString(72, y, label)
+        y -= 18
+
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(
+            72,
+            y,
+            f"ReadiScore: {int(r['readiscore'] * 100)}%   (Rank #{rank})",
+        )
+        y -= 16
+
         c.setFont("Helvetica", 10)
         c.drawString(
             72,
-            h - 104,
-            f"Bucket: {r.get('role_bucket','')}   "
-            f"SkillFit: {int(r['skillfit']*100)}%   "
-            f"ReadiScore: {int(r['readiscore']*100)}%   "
-            f"Avail: {r['hours']} hrs",
+            y,
+            f"Optimal role: {r.get('role_title','Unspecified role')}",
         )
+        y -= 14
 
-        y = h - 130
+        bucket = r.get("role_bucket", "")
+        skill_pct = int(r["skillfit"] * 100)
+        avail = r["hours"]
+        info_line = (
+            f"Bucket: {bucket}    Skill match: {skill_pct}%    Availability: {avail} hrs"
+        )
+        c.drawString(72, y, info_line)
+        y -= 20
 
-        # What the project asked for (shared summary)
-        if proj_summary:
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "What the project asked for:")
-            y -= 16
-            c.setFont("Helvetica", 10)
-            for line in wrap_text(proj_summary, 96):
-                if y < 80:
+        # Strengths
+        strengths = [h["text"] for h in r.get("highlights", []) if h.get("met")]
+        gaps = [h["text"] for h in r.get("highlights", []) if not h.get("met")]
+
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Best-aligned project strengths:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        if strengths:
+            for s in strengths:
+                for line in wrap_text(f"• {s}", 92):
+                    if y < 72:
+                        c.showPage()
+                        header()
+                        y = h - 120
+                        c.setFont("Helvetica", 10)
+                    c.drawString(72, y, line)
+                    y -= 13
+        else:
+            c.drawString(
+                72,
+                y,
+                "• No clear strengths against the extracted project requirements.",
+            )
+            y -= 13
+
+        # Gaps / risks
+        y -= 6
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Gaps / risks:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        has_gap = False
+        for g in gaps:
+            has_gap = True
+            for line in wrap_text(f"• {g}", 92):
+                if y < 72:
                     c.showPage()
-                    y = h - 72
+                    header()
+                    y = h - 120
                     c.setFont("Helvetica", 10)
-                c.drawString(80, y, line)
-                y -= 14
+                c.drawString(72, y, line)
+                y -= 13
 
-        # How this person fits
-        fit = r.get("project_fit_summary", "")
-        if fit:
-            y -= 10
-            if y < 80:
-                c.showPage()
-                y = h - 72
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "How this person could fit this project:")
-            y -= 16
-            c.setFont("Helvetica", 10)
-            for line in wrap_text(fit, 96):
-                if y < 80:
-                    c.showPage()
-                    y = h - 72
-                    c.setFont("Helvetica", 10)
-                c.drawString(80, y, line)
-                y -= 14
-
-        # Unsuitable reason (if any)
-        uns = r.get("unsuitable_reason", "")
+        uns = (r.get("unsuitable_reason") or "").strip()
         if uns:
-            y -= 10
-            if y < 80:
-                c.showPage()
-                y = h - 72
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(72, y, "Why this person may not be suitable:")
-            y -= 16
-            c.setFont("Helvetica", 10)
-            for line in wrap_text(uns, 96):
-                if y < 80:
+            has_gap = True
+            for line in wrap_text(f"• {uns}", 92):
+                if y < 72:
                     c.showPage()
-                    y = h - 72
+                    header()
+                    y = h - 120
                     c.setFont("Helvetica", 10)
-                c.drawString(80, y, line)
-                y -= 14
+                c.drawString(72, y, line)
+                y -= 13
+
+        if not has_gap:
+            c.drawString(72, y, "• No material risks identified from the narrative.")
+            y -= 13
+
+        # Availability impact
+        y -= 6
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Availability impact:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        if baseline > 0:
+            pct_avail = avail / baseline
+            if pct_avail >= 0.8:
+                desc = "ample availability for the selected window."
+            elif pct_avail >= 0.5:
+                desc = "moderate availability; may require some workload balancing."
+            else:
+                desc = "limited availability; candidate may already be heavily committed."
+            line = (
+                f"• Available {avail:.0f} of ~{baseline:.0f} possible hours "
+                f"({pct_avail*100:.0f}% of capacity); {desc}"
+            )
+        else:
+            line = f"• Availability hours: {avail} (baseline not specified)."
+
+        for line_part in wrap_text(line, 92):
+            if y < 72:
+                c.showPage()
+                header()
+                y = h - 120
+                c.setFont("Helvetica", 10)
+            c.drawString(72, y, line_part)
+            y -= 13
+
+        # Overall recommendation
+        y -= 6
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Overall recommendation:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        rec = (r.get("project_fit_summary") or "").strip()
+        if not rec:
+            rec = (
+                "No detailed narrative recommendation was generated for this candidate."
+            )
+        for line in wrap_text(f"• {rec}", 92):
+            if y < 72:
+                c.showPage()
+                header()
+                y = h - 120
+                c.setFont("Helvetica", 10)
+            c.drawString(72, y, line)
+            y -= 13
 
         c.showPage()
 
@@ -546,45 +705,64 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     # LLM client
     client = get_openai()
 
-    # LLM-derived project struct (for summary/narrative)
+    # Extract job struct + embedding
     job_struct = llm_extract_job(client, job_text)
+    job_emb = embed_text(client, job_text)
 
-    # Structured requirements for scoring/tiles
-    requirements = extract_project_requirements(job_text)
+    must_have = job_struct.get("must_have_skills", [])
 
-    # Build candidates
+    def build_highlights(profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Build top-5 project requirement highlights (✓ / ✗) for tiles + PDF.
+        """
+        skills = [str(s).lower() for s in profile.get("skills", [])]
+        highlights: List[Dict[str, Any]] = []
+        for req in must_have:
+            label = str(req).strip()
+            if not label:
+                continue
+            label_l = label.lower()
+            met = any(
+                (label_l in s) or (s in label_l)
+                for s in skills
+            )
+            highlights.append({"text": label, "met": met})
+            if len(highlights) >= 5:
+                break
+        return highlights
+
+    # Build candidates (profile + embedding + role inference)
     candidates: List[Dict[str, Any]] = []
     for up in resumes_raw:
         stem = filename_stem(up.name)
+        display_label = clean_emp_label(stem)
+
         text = extract_text_from_any(up)
         prof = llm_extract_profile(client, text)
+        prof_emb = embed_text(client, text)
 
-        # Per-skill scoring from skills_backend
-        scored = score_resume_against_requirements(requirements, text)
-        per_skill = scored.get("per_skill", [])
-        skill_pct = float(scored.get("skill_match_pct", 0.0))
-
-        # Role inference (bucket + narrative)
         role_info = infer_resume_role(job_text, text)
+        highlights = build_highlights(prof)
 
         candidates.append(
             {
                 "id": stem,
+                "label": display_label,
                 "fname": up.name,
                 "stem": stem,
                 "name": prof.get("name", ""),
                 "emails": prof.get("emails", []),
                 "profile": prof,
-                "skill_pct": skill_pct,
-                "top_needs": per_skill[:5],  # top 5 requirements for tiles
+                "emb": prof_emb,
                 "role_bucket": role_info.get("bucket", "Out-of-scope"),
                 "role_title": role_info.get("role_title", "Unspecified role"),
                 "project_fit_summary": role_info.get("project_fit_summary", ""),
                 "unsuitable_reason": role_info.get("unsuitable_reason", ""),
+                "highlights": highlights,
             }
         )
 
-    # Calendars
+    # Gather calendars (urls/uploads) as bytes list
     calendars = []
     if cal_method == "Calendar link" and cal_link:
         try:
@@ -613,11 +791,43 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     # If no calendars, availability = baseline (full work window)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
+    def score_candidate(profile: Dict[str, Any], job: Dict[str, Any], emb_sim: float) -> float:
+        must = set(s.lower() for s in job.get("must_have_skills", []))
+        skills = set(s.lower() for s in profile.get("skills", []))
+
+        if must and not (must & skills):
+            base = 0.0
+        else:
+            mh_overlap = len(must & skills) / max(len(must), 1) if must else 0.6
+
+            cert_req = set(s.lower() for s in job.get("certifications_required", []))
+            certs = set(s.lower() for s in profile.get("certifications", []))
+            cert_match = 1.0 if (not cert_req or cert_req.issubset(certs)) else 0.0
+
+            years_ok = 1.0
+            if job.get("years_experience_min", 0) > 0:
+                years_ok = (
+                    1.0
+                    if profile.get("years_experience", 0)
+                    >= job["years_experience_min"]
+                    else 0.6
+                )
+
+            base = (0.5 * mh_overlap + 0.2 * cert_match + 0.3 * emb_sim) * years_ok
+
+        return max(0.0, min(1.0, base))
+
     def availability_for_employee(emp_id: str) -> int:
+        """
+        Compute remaining hours for this employee ID using the shared calendar,
+        if one is provided. Assumes calendar events are tagged with something
+        like 'Employee_001' in the SUMMARY line.
+        """
         if not calendars:
             return window_baseline
 
         cal_bytes = calendars[0]["_bytes"]
+
         m = re.search(r"Employee_\d+", emp_id)
         emp_tag = m.group(0) if m else emp_id
 
@@ -631,17 +841,18 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         )
 
     results: List[Dict[str, Any]] = []
-    for c in candidates:
-        skillfit = max(0.0, min(1.0, c["skill_pct"] / 100.0))
 
+    for c in candidates:
+        emb_sim = cosine(c["emb"], job_emb)
+        skillfit = score_candidate(c["profile"], job_struct, emb_sim)
         avail = availability_for_employee(c["id"])
         avail_frac = avail / max(window_baseline, 1)
-
         readiscore = alpha * skillfit + (1.0 - alpha) * avail_frac
 
         results.append(
             {
                 "emp_id": c["id"],
+                "label": c["label"],
                 "skillfit": round(skillfit, 4),
                 "hours": int(avail),
                 "readiscore": round(readiscore, 4),
@@ -649,11 +860,11 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
                 "role_title": c["role_title"],
                 "project_fit_summary": c["project_fit_summary"],
                 "unsuitable_reason": c["unsuitable_reason"],
-                "top_needs": c["top_needs"],
+                "highlights": c["highlights"],
             }
         )
 
-# ---------- Render results (bucketed tiles only) ----------
+# ---------- Render results (bucketed tiles) ----------
 
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
@@ -684,23 +895,18 @@ for b in BUCKET_ORDER:
     for i, r in enumerate(group):
         col = cols[i % 4]
         with col:
-            needs = r.get("top_needs", [])[:5]
-            lines: List[str] = []
-            for need in needs:
-                label = str(need.get("label", "")).strip()
-                status = str(need.get("match_status", "no_match"))
-                if not label:
-                    continue
-                if status == "strong_match":
-                    icon = "✅"
-                elif status == "partial_match":
-                    icon = "⚠️"
-                else:
-                    icon = "✖️"
-                lines.append(f"{icon} {label}")
-            needs_html = "<br/>".join(lines) if lines else "No key requirements clearly met. See PDF for details."
+            highlights = r.get("highlights", [])[:5]
+            if highlights:
+                bullets = "".join(
+                    f"<div>{'&#10003;' if h.get('met') else '&#10007;'} {h.get('text','')}</div>"
+                    for h in highlights
+                )
+            else:
+                bullets = "<div>No project requirements extracted.</div>"
 
-            st.markdown(
+            ideal_fit = r.get("role_bucket", "Unspecified")
+
+            col.markdown(
                 f"""
 <div style="
   background:#10233D;
@@ -711,25 +917,29 @@ for b in BUCKET_ORDER:
   box-shadow:0 10px 28px rgba(0,0,0,.35);
   min-height:160px;
 ">
-  <div style="font-size:0.85rem;font-weight:700;color:#FF8A1E;">
-    {r["emp_id"]} — {r.get("role_title","")}
+  <div style="font-size:0.9rem;font-weight:700;color:#FF8A1E;">
+    {r.get("label", r["emp_id"])}
   </div>
   <div style="font-size:1.5rem;font-weight:800;margin:4px 0 2px;">
-    {int(r["readiscore"]*100)}%
+    ReadiScore: {int(r["readiscore"]*100)}%
   </div>
-  <div style="font-size:0.8rem;opacity:0.92;">
+  <div style="font-size:0.8rem;opacity:0.92;margin-bottom:4px;">
     Skill match: {int(r["skillfit"]*100)}%<br/>
-    Available: {r["hours"]} hrs
+    Available: {r["hours"]} hrs<br/>
+    Ideal Fit: {ideal_fit}
   </div>
-  <div style="font-size:0.75rem;margin-top:6px;opacity:0.9;line-height:1.25;">
-    {needs_html}
+  <div style="font-size:0.78rem;font-weight:600;margin-top:4px;">
+    Highlights
+  </div>
+  <div style="font-size:0.75rem;margin-top:2px;opacity:0.9;">
+    {bullets}
   </div>
 </div>
 """,
                 unsafe_allow_html=True,
             )
 
-# ---------- PDF download ----------
+# ---------- PDF + Return (bottom row) ----------
 
 params = {
     "start_date": str(st.session_state.get("start_date")),
@@ -738,11 +948,20 @@ params = {
     "max_hours": st.session_state.get("max_hours", 8),
     "alpha": float(st.session_state.get("alpha", 0.7)),
     "project_summary": job_struct.get("summary", ""),
+    "window_baseline": window_baseline,
 }
 
-st.download_button(
-    "Download Full PDF Report",
-    data=build_pdf(results, params),
-    file_name="teamreadi_results.pdf",
-    mime="application/pdf",
-)
+col_pdf, col_back = st.columns([1, 1])
+
+with col_pdf:
+    st.download_button(
+        "Download Full PDF Report",
+        data=build_pdf(results, params),
+        file_name="teamreadi_results.pdf",
+        mime="application/pdf",
+    )
+
+with col_back:
+    if st.button("Return to Start"):
+        st.session_state["go_home"] = True
+        st.experimental_rerun()
