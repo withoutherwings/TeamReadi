@@ -140,29 +140,28 @@ Do not include any text outside the JSON.
 """
 
     try:
-        resp = client.responses.create(
-            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You extract staffing requirements from construction RFPs. "
-                        "Always respond with valid JSON: "
-                        "{\"requirements\": [...]} and nothing else."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_output_tokens=900,
-            temperature=0,
-        )
+resp = client.chat.completions.create(
+    model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+    messages=[
+        {
+            "role": "system",
+            "content": (
+                "You extract staffing requirements from construction RFPs. "
+                "Always respond with valid JSON: {\"requirements\": [...]} and nothing else."
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ],
+    temperature=0,
+    max_tokens=900,
+)
 
-        raw = resp.output[0].content[0].text or ""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return _fallback_requirements(project_text)
+raw = resp.choices[0].message.content or ""
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    return _fallback_requirements(project_text)
+
 
         reqs = data.get("requirements", [])
         if not isinstance(reqs, list) or not reqs:
@@ -230,30 +229,30 @@ Do not include any text outside the JSON.
 """
 
     try:
-        resp = client.responses.create(
-            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": "You evaluate resumes against project requirements and respond ONLY with JSON.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_output_tokens=900,
-            temperature=0,
-        )
+       resp = client.chat.completions.create(
+    model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+    messages=[
+        {
+            "role": "system",
+            "content": "You evaluate resumes against project requirements and respond ONLY with JSON.",
+        },
+        {"role": "user", "content": prompt},
+    ],
+    temperature=0,
+    max_tokens=900,
+)
 
-        raw = resp.output[0].content[0].text or ""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return _fallback_resume_score(requirements, resume_text)
+raw = resp.choices[0].message.content or ""
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    return _fallback_resume_score(requirements, resume_text)
 
-        if "per_skill" not in data or "skill_match_pct" not in data:
-            return _fallback_resume_score(requirements, resume_text)
+if "per_skill" not in data or "skill_match_pct" not in data:
+    return _fallback_resume_score(requirements, resume_text)
 
-        return data
+return data
+
 
     except Exception:
         return _fallback_resume_score(requirements, resume_text)
