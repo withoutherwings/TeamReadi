@@ -5,11 +5,6 @@ LLM-powered helpers:
 - build_project_profile(project_text)
 - build_candidate_profile(resume_text, project_profile)
 - compute_skill_match(project_must_have, candidate_skills)
-
-We *don’t* rely on OpenAI JSON mode here, because the current library
-version routes through Responses.create in a way that doesn’t accept
-`response_format`. Instead, we enforce JSON in the prompt and parse it
-manually, with safe fallbacks.
 """
 
 import os
@@ -68,19 +63,28 @@ def _llm_json(prompt: str) -> Dict[str, Any]:
 
         # Strip possible markdown code fences
         if text.startswith("```"):
-            # remove leading/trailing code fence lines
-            # e.g. ```json\n{...}\n```
-            parts = text.strip("`").split("\n", 1)
-            if len(parts) == 2 and parts[0].lower().startswith("json"):
-                text = parts[1]
-            else:
-                text = "\n".join(parts[1:]) if len(parts) > 1 else parts[0]
+            text = text.strip()
+            lines = text.splitlines()
+            if len(lines) >= 2:
+                if lines[0].lstrip().startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                text = "\n".join(lines)
 
-        return json.loads(text)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return {}
+        return data
+
     except Exception as e:
         print(f"[TeamReadi] _llm_json error: {e}")
         return {}
 
+
+# ---------------------------------------------------------------------------
+# Project profile
+# ---------------------------------------------------------------------------
 
 def build_project_profile(project_text: str) -> Dict[str, Any]:
     """
@@ -90,6 +94,7 @@ def build_project_profile(project_text: str) -> Dict[str, Any]:
       "project_summary": str,
       "must_have_skills": [str, ...],
       "nice_to_have_skills": [str, ...],
+      "role_mix_by_bucket": {bucket: int}
     }
     """
     trimmed = (project_text or "").strip()
@@ -98,6 +103,7 @@ def build_project_profile(project_text: str) -> Dict[str, Any]:
             "project_summary": "",
             "must_have_skills": [],
             "nice_to_have_skills": [],
+            "role_mix_by_bucket": {},
         }
 
     trimmed = trimmed[:8000]
@@ -109,23 +115,31 @@ You will be given the full text of an RFP / project description.
 
 1. Read the RFP carefully.
 2. Write:
-   - "project_summary": THREE paragraphs:
-       * Paragraph 1: a general overview of the project (owner, facility,
-         location/context, and the high-level purpose of the work).
+   - "project_summary": THREE paragraphs, separated by a blank line:
+       * Paragraph 1: a concise, factual overview for staffing decisions:
+         owner, facility, city/state, contract type (if given), and the total
+         expected performance period or construction duration, using dates
+         or approximate months if stated. Avoid marketing or funding language.
        * Paragraph 2: the key scope and technical requirements (major systems,
          phases, deliverables, constraints, and coordination requirements).
        * Paragraph 3: role-specific requirements for the construction manager /
-         project manager, including any required certifications, SDVOSB or other
-         set-aside status, bonding requirements, and federal or regulatory
-         frameworks (e.g., FAR, VA, EHRM).
+         project manager and key team members, including any required
+         certifications, SDVOSB or other set-aside status, bonding requirements,
+         and federal or regulatory frameworks (e.g., FAR, VAAR, VA, EHRM).
    - "must_have_skills": 5–10 SHORT phrases for truly essential skills or
      experience that are clearly required by this RFP (e.g., "FAR compliance",
      "federal VA project experience", "bid guarantees and performance bonds").
    - "nice_to_have_skills": 3–8 SHORT phrases that are helpful but not strictly
      required.
+   - "role_mix_by_bucket": an object whose keys are the fixed buckets
+     "PM/Admin", "Support/Coordination", and "Field/Operator", and whose
+     values are integers estimating how many people in each bucket the project
+     will realistically need at peak
+     (e.g. {{"PM/Admin": 1, "Support/Coordination": 1, "Field/Operator": 2}}).
 
 Return ONLY a valid JSON object with exactly these keys:
-"project_summary", "must_have_skills", "nice_to_have_skills".
+"project_summary", "must_have_skills", "nice_to_have_skills",
+"role_mix_by_bucket".
 
 RFP TEXT:
 ---
@@ -133,17 +147,27 @@ RFP TEXT:
 ---
 """
     data = _llm_json(prompt) or {}
+    if not isinstance(data, dict):
+        data = {}
 
     project_summary = (data.get("project_summary") or "").strip()
     must_have = [str(s).strip() for s in (data.get("must_have_skills") or []) if str(s).strip()]
     nice_to_have = [str(s).strip() for s in (data.get("nice_to_have_skills") or []) if str(s).strip()]
+    role_mix = data.get("role_mix_by_bucket") or {}
+    if not isinstance(role_mix, dict):
+        role_mix = {}
 
     return {
         "project_summary": project_summary,
         "must_have_skills": must_have,
         "nice_to_have_skills": nice_to_have,
+        "role_mix_by_bucket": role_mix,
     }
 
+
+# ---------------------------------------------------------------------------
+# Candidate profile
+# ---------------------------------------------------------------------------
 
 def build_candidate_profile(resume_text: str, project_profile: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -188,7 +212,17 @@ CANDIDATE RESUME:
 Your tasks:
 
 1. Decide which MUST-HAVE skills the candidate clearly meets.
-2. Decide which MUST-HAVE skills are clearly missing or too weak.
+   - Treat organizational set-aside conditions (e.g., SDVOSB certification,
+     woman-owned business status, bonding capacity, etc.) as attributes of the
+     bidding firm, not the individual employee. Do NOT mark these as "met" or
+     "missing" for a candidate unless the resume explicitly shows that this
+     person owns or leads such a certified business.
+   - You may still mention these firm-level conditions in the project context
+     in the candidate_summary if it helps explain overall fit, but do not count
+     them as individual strengths or gaps.
+2. Decide which MUST-HAVE skills are clearly missing or too weak at the
+   individual level (e.g., no federal VA project experience, no similar
+   infrastructure or EHRM background, no relevant schedule/cost control).
 3. Extract 10–20 SHORT "candidate_skills" phrases that describe this candidate,
    focusing on project-relevant hard and soft skills.
 4. Write "candidate_summary": 1–3 sentences about how well this person fits
@@ -208,6 +242,8 @@ Return ONLY a JSON object with keys:
 "skill_match_percent".
 """
     data = _llm_json(prompt) or {}
+    if not isinstance(data, dict):
+        data = {}
 
     candidate_summary = (data.get("candidate_summary") or "").strip()
     candidate_skills = [str(s).strip() for s in (data.get("candidate_skills") or []) if str(s).strip()]
