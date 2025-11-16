@@ -19,7 +19,7 @@ from backend.pipeline import (
 )
 
 # ---------------------------------------------------------------------------
-# Label helpers
+# Label / ID helpers
 # ---------------------------------------------------------------------------
 
 def format_employee_label(raw_id: str) -> str:
@@ -63,6 +63,60 @@ def infer_employee_display_name(stem: str, resume_text: str) -> str:
         return f"{m2.group(1).title()} {m2.group(2).zfill(3)}"
 
     return format_employee_label(stem)
+
+
+def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
+    """
+    Build a set of loose tags for matching this candidate to calendar events.
+
+    Examples for:
+      stem='Employee_010 Resume.pdf', display_name='Employee 010'
+    might include:
+      'employee 010', 'employee_010', '010'
+
+    For 'Bob Saget', you'll get:
+      'bob saget', 'bob', 'saget'
+    so that 'Bob - site visit' matches.
+    """
+    tags: Set[str] = set()
+
+    # Base strings: display name + stem without extension
+    bases = []
+    for src in (display_name, stem):
+        s = (src or "").strip()
+        if not s:
+            continue
+        s = re.sub(r"\.[A-Za-z0-9]+$", "", s)  # drop extension
+        bases.append(s)
+
+    for base in bases:
+        # Normalize underscores to spaces
+        norm = base.replace("_", " ").strip()
+        if not norm:
+            continue
+
+        # Full normalized string
+        tags.add(norm.lower())
+
+        # Split into words
+        parts = [p for p in re.split(r"[^A-Za-z0-9]+", norm) if p]
+        if len(parts) >= 2:
+            tags.add((parts[0] + " " + parts[1]).lower())  # first + last
+
+        for p in parts:
+            if len(p) >= 3:   # ignore super-short junk like "cm"
+                tags.add(p.lower())
+
+    # Explicit Employee ### patterns from stem
+    m = re.search(r"(Employee)[ _-]*0*(\d+)", stem, flags=re.IGNORECASE)
+    if m:
+        num = m.group(2)
+        base_emp = m.group(1)
+        tags.add(f"{base_emp} {num}".lower())
+        tags.add(f"{base_emp} {num.zfill(3)}".lower())
+        tags.add(f"{base_emp}_{num.zfill(3)}".lower())
+
+    return sorted(tags)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +232,7 @@ def read_text_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calendar & availability helpers
+# Calendar & availability helpers (name-aware, fuzzy)
 # ---------------------------------------------------------------------------
 
 def busy_blocks_from_ics_for_employee(
@@ -186,25 +240,28 @@ def busy_blocks_from_ics_for_employee(
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
-    emp_tag: Optional[str] = None,
+    tags: Optional[List[str]] = None,
 ) -> List[Tuple[dt.datetime, dt.datetime]]:
     """
     Return merged busy blocks for a single employee, based on a shared calendar.
 
-    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY
-    contains that tag are counted as busy for this employee.
+    - If `tags` is provided, we only count events whose SUMMARY contains
+      at least one of those tags (case-insensitive).
+    - Tags are loose: 'bob saget', 'bob', 'saget', 'employee 010', etc.
     """
     cal = Calendar.from_ical(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
+
+    tag_list = [t.lower() for t in (tags or []) if t]
+    use_tags = len(tag_list) > 0
 
     for comp in cal.walk("VEVENT"):
         dtstart = comp.get("dtstart").dt
         dtend = comp.get("dtend").dt
 
-        # Filter by employee tag in SUMMARY
-        if emp_tag:
-            summary = str(comp.get("summary", ""))
-            if emp_tag not in summary:
+        if use_tags:
+            summary = str(comp.get("summary", "")).lower()
+            if not any(tag in summary for tag in tag_list):
                 continue
 
         if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
@@ -245,7 +302,7 @@ def total_work_hours(
 
 def remaining_hours_for_employee(
     ics_bytes: bytes,
-    emp_tag: Optional[str],
+    tags: Optional[List[str]],
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
@@ -258,7 +315,7 @@ def remaining_hours_for_employee(
     busy_secs = sum(
         (e - s).total_seconds()
         for s, e in busy_blocks_from_ics_for_employee(
-            ics_bytes, window_start, window_end, working_days, emp_tag
+            ics_bytes, window_start, window_end, working_days, tags
         )
     )
     busy_hours = busy_secs / 3600.0
@@ -358,20 +415,29 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.drawString(72, y, "Project summary:")
         y -= 18
         c.setFont("Helvetica", 10)
-        for line in wrap_text(proj_summary, 95):
-            if y < 80:
-                c.showPage()
-                header()
-                y = h - 130
-                c.setFont("Helvetica", 10)
-            c.drawString(72, y, line)
-            y -= 14
+
+        # Split into paragraphs on blank lines (LLM should return 3 with blank lines)
+        paragraphs = [p.strip() for p in proj_summary.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [proj_summary.strip()]
+
+        for p in paragraphs:
+            for line in wrap_text(p, 95):
+                if y < 80:
+                    c.showPage()
+                    header()
+                    y = h - 130
+                    c.setFont("Helvetica", 10)
+                c.drawString(72, y, line)
+                y -= 14
+            y -= 8  # extra space between paragraphs
+
         y -= 10
 
     role_counts = params.get("role_counts", {})
     if role_counts:
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Role mix by bucket:")
+        c.drawString(72, y, "Submitted candidates by role bucket:")
         y -= 18
         c.setFont("Helvetica", 10)
         for bucket, count in role_counts.items():
@@ -549,15 +615,13 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
 
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
-    def availability_for_employee(emp_id: str) -> int:
+    def availability_for_employee(tags: List[str]) -> int:
         if not calendars:
             return window_baseline
         cal_bytes = calendars[0]["_bytes"]
-        m = re.search(r"Employee_0*\d+", emp_id)
-        emp_tag = m.group(0) if m else emp_id
         return remaining_hours_for_employee(
             cal_bytes,
-            emp_tag,
+            tags,
             start_dt,
             end_dt,
             working_days,
@@ -570,6 +634,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         text = extract_text_from_upload(up)
 
         display_name = infer_employee_display_name(stem, text)
+        calendar_tags = build_employee_calendar_tags(display_name, stem)
 
         cand_profile = build_candidate_profile(text, project_profile)
         skill_match_pct = cand_profile.get("skill_match_percent")
@@ -586,6 +651,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
             {
                 "id": stem,
                 "display_name": display_name,
+                "calendar_tags": calendar_tags,
                 "fname": getattr(up, "name", stem),
                 "stem": stem,
                 "profile": cand_profile,
@@ -599,8 +665,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
 
     results: List[Dict[str, Any]] = []
     for c in candidates:
-        emp_id = c["id"]
-        avail = availability_for_employee(emp_id)
+        avail = availability_for_employee(c.get("calendar_tags", []))
         avail_frac = avail / max(window_baseline, 1)
 
         readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
