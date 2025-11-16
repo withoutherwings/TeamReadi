@@ -110,6 +110,46 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
     return sorted(tags)
 
 
+def infer_project_name_from_inputs(
+    req_files: List[Any],
+    req_url: Optional[str],
+    job_text: str,
+) -> str:
+    """
+    Try to infer a project name from:
+      1) RFP file name,
+      2) URL tail,
+      3) first reasonably short line in the RFP text that mentions 'project'.
+    """
+    # 1) From uploaded file name
+    if req_files:
+        first = req_files[0]
+        name = getattr(first, "name", "") or getattr(first, "filename", "")
+        base = filename_stem(name)
+        cleaned = re.sub(r"[_\-]+", " ", base).strip()
+        if cleaned:
+            return cleaned
+
+    # 2) From URL
+    if req_url:
+        path = str(req_url).rstrip("/").split("/")[-1]
+        base = filename_stem(path)
+        cleaned = re.sub(r"[_\-]+", " ", base).strip()
+        if cleaned:
+            return cleaned
+
+    # 3) From RFP text
+    for line in (job_text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if "project" in low and len(s) <= 120:
+            return s
+
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Session / params
 # ---------------------------------------------------------------------------
@@ -223,66 +263,8 @@ def read_text_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calendar & availability helpers (improved fuzzy matching)
+# Calendar & availability helpers
 # ---------------------------------------------------------------------------
-
-# Very generic words we do NOT want to match on when guessing employees
-_EMP_STOPWORDS: Set[str] = {
-    "employee",
-    "resume",
-    "calendar",
-    "project",
-    "manager",
-    "engineer",
-    "coordinator",
-    "pm",
-    "cm",
-    "admin",
-    "role",
-    "visit",
-    "site",
-    "shift",
-    "work",
-    "working",
-    "meeting",
-}
-
-
-def _normalize_tokens(text: str) -> Set[str]:
-    """
-    Turn arbitrary text into a set of lowercase alphanumeric tokens,
-    dropping very common / unhelpful words.
-    """
-    text = str(text or "").lower()
-    tokens = re.split(r"[^a-z0-9]+", text)
-    return {
-        t
-        for t in tokens
-        if t and len(t) >= 2 and t not in _EMP_STOPWORDS
-    }
-
-
-def _summary_matches_tags(summary: str, tags: Optional[List[str]]) -> bool:
-    """
-    Instead of raw substring search, do token overlap between the calendar SUMMARY
-    and the tag strings derived from the resume / filename.
-    """
-    if not tags:
-        return False
-
-    summary_tokens = _normalize_tokens(summary)
-    if not summary_tokens:
-        return False
-
-    tag_tokens: Set[str] = set()
-    for t in tags:
-        tag_tokens |= _normalize_tokens(t)
-
-    if not tag_tokens:
-        return False
-
-    return bool(summary_tokens & tag_tokens)
-
 
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
@@ -294,70 +276,43 @@ def busy_blocks_from_ics_for_employee(
     """
     Return merged busy blocks for a single employee, based on a shared calendar.
 
-    - If `tags` is provided, we count events whose SUMMARY *token set* overlaps
-      with the tokens from the tags (fuzzy match for names / IDs).
+    - If `tags` is provided, we only count events whose SUMMARY contains
+      at least one of those tags (case-insensitive).
     """
-    try:
-        cal = Calendar.from_ical(ics_bytes)
-    except Exception:
-        return []
-
+    cal = Calendar.from_ical(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
 
+    tag_list = [t.lower() for t in (tags or []) if t]
+    use_tags = len(tag_list) > 0
+
     for comp in cal.walk("VEVENT"):
-        start_raw = comp.get("dtstart")
-        end_raw = comp.get("dtend")
+        dtstart = comp.get("dtstart").dt
+        dtend = comp.get("dtend").dt
 
-        if not start_raw:
-            continue
-
-        dtstart = start_raw.dt
-        dtend = end_raw.dt if end_raw is not None else None
-
-        if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
-            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
-        if dtend is None:
-            dtend = dtstart + dt.timedelta(hours=1)
-        elif isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
-            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
-
-        if not isinstance(dtstart, dt.datetime) or not isinstance(dtend, dt.datetime):
-            continue
-
-        if dtend <= dtstart:
-            continue
-
-        if tags:
-            summary = str(comp.get("summary", ""))
-            if not _summary_matches_tags(summary, tags):
+        if use_tags:
+            summary = str(comp.get("summary", "")).lower()
+            if not any(tag in summary for tag in tag_list):
                 continue
+
+        if isinstance(dtstart, dt.date)) and not isinstance(dtstart, dt.datetime):
+            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
+        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
+            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
 
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
-
-        if e <= s:
-            continue
-
-        if (s.weekday() not in working_days) and (e.weekday() not in working_days):
-            continue
-
-        blocks.append((s, e))
+        if e > s and (s.weekday() in working_days or e.weekday() in working_days):
+            blocks.append((s, e))
 
     blocks.sort(key=lambda x: x[0])
-    if not blocks:
-        return []
-
-    merged: List[Tuple[dt.datetime, dt.datetime]] = []
-    cur_s, cur_e = blocks[0]
-    for s, e in blocks[1:]:
-        if s > cur_e:
-            merged.append((cur_s, cur_e))
-            cur_s, cur_e = s, e
+    merged: List[List[dt.datetime]] = []
+    for s, e in blocks:
+        if not merged or s > merged[-1][1]:
+            merged.append([s, e])
         else:
-            cur_e = max(cur_e, e)
-    merged.append((cur_s, cur_e))
+            merged[-1][1] = max(merged[-1][1], e)
 
-    return merged
+    return [(s, e) for s, e in merged]
 
 
 def total_work_hours(
@@ -383,11 +338,6 @@ def remaining_hours_for_employee(
     working_days: Set[int],
     max_hours_per_day: int,
 ) -> int:
-    """
-    Compute remaining hours:
-      baseline window hours (from user dates & max_hours)
-      minus busy hours from calendar events that fuzzily match this employee.
-    """
     baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
     if not ics_bytes:
         return baseline
@@ -478,11 +428,34 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     def header():
         c.setFont("Helvetica-Bold", 18)
         c.drawString(72, h - 72, "ReadiReport")
+
         c.setFont("Helvetica", 10)
-        c.drawString(72, h - 90, f"Window: {params.get('start_date')} to {params.get('end_date')}")
+        y0 = h - 90
+
+        project_name = params.get("project_name") or ""
+        if project_name:
+            c.drawString(72, y0, f"Project: {project_name}")
+            y0 -= 14
+
+        project_location = params.get("project_location") or ""
+        if project_location:
+            c.drawString(72, y0, f"Location: {project_location}")
+            y0 -= 14
+
+        project_window = params.get("project_window") or ""
+        if project_window:
+            c.drawString(72, y0, f"RFP project window: {project_window}")
+            y0 -= 14
+
         c.drawString(
             72,
-            h - 104,
+            y0,
+            f"Calendar window: {params.get('start_date')} to {params.get('end_date')}",
+        )
+        y0 -= 14
+        c.drawString(
+            72,
+            y0,
             f"Workdays: {', '.join(params.get('workdays', []))}   "
             f"Max hrs/day: {params.get('max_hours')}",
         )
@@ -500,7 +473,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             lines.append(" ".join(line))
         return lines
 
-    # Page 1: project summary + role mix
+    # Page 1: project summary + role mix + overview tiles
     header()
     y = h - 130
 
@@ -528,6 +501,28 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         y -= 10
 
+    # Company-level requirements (SDVOSB, FAR, etc.) – project-level only
+    company_reqs = params.get("company_requirements") or []
+    if company_reqs:
+        if y < 100:
+            c.showPage()
+            header()
+            y = h - 130
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Company-level requirements / certifications:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        for req in company_reqs:
+            for line in wrap_text(f"• {req}", 95):
+                if y < 80:
+                    c.showPage()
+                    header()
+                    y = h - 130
+                    c.setFont("Helvetica", 10)
+                c.drawString(72, y, line)
+                y -= 14
+        y -= 8
+
     role_mix = params.get("role_mix") or {}
     if not isinstance(role_mix, dict):
         role_mix = {}
@@ -548,11 +543,43 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                 c.setFont("Helvetica", 10)
             c.drawString(80, y, f"- {bucket}: {count} role(s)")
             y -= 14
+        y -= 10
+
+    # Candidate snapshot: printable overview of tiles
+    if results:
+        if y < 120:
+            c.showPage()
+            header()
+            y = h - 130
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(72, y, "Candidate snapshot:")
+        y -= 18
+        c.setFont("Helvetica", 10)
+
+        for r in results:
+            display_name = r.get("display_name") or r.get("emp_id", "")
+            line = (
+                f"{display_name} — "
+                f"ReadiScore {int(r['readiscore'] * 100)}%, "
+                f"Skill match {int(r['skillfit'] * 100)}%, "
+                f"Available {r['hours']} hrs, "
+                f"Ideal fit: {r.get('role_title', '')}"
+            )
+            for ln in wrap_text(line, 95):
+                if y < 80:
+                    c.showPage()
+                    header()
+                    y = h - 130
+                    c.setFont("Helvetica", 10)
+                c.drawString(80, y, ln)
+                y -= 14
+            y -= 4
 
     c.showPage()
 
     window_baseline = params.get("window_baseline", 1) or 1
 
+    # Detailed per-candidate pages
     for idx, r in enumerate(results, start=1):
         header()
         y = h - 130
@@ -581,8 +608,12 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         profile = r.get("profile") or {}
 
-        strengths = profile.get("strengths") or [h["skill"] for h in r.get("highlights", []) if h.get("met")]
-        gaps = profile.get("gaps") or [h["skill"] for h in r.get("highlights", []) if not h.get("met")]
+        strengths = profile.get("strengths") or [
+            h["skill"] for h in r.get("highlights", []) if h.get("met")
+        ]
+        gaps = profile.get("gaps") or [
+            h["skill"] for h in r.get("highlights", []) if not h.get("met")
+        ]
 
         c.setFont("Helvetica-Bold", 11)
         c.drawString(72, y, "Best-aligned project strengths:")
@@ -682,7 +713,7 @@ def fetch_ics_bytes(url: str) -> bytes:
         return b""
 
 
-def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
+def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
 
@@ -698,6 +729,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         job_text = ""
 
     project_profile = build_project_profile(job_text)
+    project_name = infer_project_name_from_inputs(req_files, req_url, job_text)
 
     calendars = []
     if cal_method == "Calendar link" and cal_link:
@@ -791,15 +823,20 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
             }
         )
 
-    return results, project_profile, window_baseline
+    return results, project_profile, window_baseline, project_name
 
 
 # ---------------------------------------------------------------------------
 # Render results (bucketed tiles)
 # ---------------------------------------------------------------------------
 
-results, project_profile, window_baseline = run_results_pipeline()
+with st.spinner("Analyzing documents and pulling calendar availability..."):
+    results, project_profile, window_baseline, project_name = run_results_pipeline()
+
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
+
+if project_name:
+    st.caption(f"Project: {project_name}")
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
@@ -872,7 +909,7 @@ for b in BUCKET_ORDER:
             )
 
 # ---------------------------------------------------------------------------
-# PDF + bottom buttons (left-justified, working "Return to Start")
+# PDF + bottom buttons
 # ---------------------------------------------------------------------------
 
 role_counts: Dict[str, int] = {}
@@ -886,24 +923,34 @@ params = {
     "workdays": st.session_state.get("workdays", ["Mon", "Tue", "Wed", "Thu", "Fri"]),
     "max_hours": st.session_state.get("max_hours", 8),
     "window_baseline": window_baseline,
+    "project_name": project_name,
     "project_summary": project_profile.get("project_summary", ""),
+    "project_window": project_profile.get("project_window", ""),
+    "project_location": project_profile.get("project_location", ""),
+    "company_requirements": project_profile.get("company_requirements", []),
     "role_mix": project_profile.get("role_mix_by_bucket", {}),
     "role_counts": role_counts,
 }
 
 pdf_data = build_pdf(results, params)
+st.download_button(
+    "Download Full PDF Report",
+    data=pdf_data,
+    file_name="teamreadi_results.pdf",
+    mime="application/pdf",
+)
 
-col_dl, col_back = st.columns([1, 1])
-with col_dl:
-    st.download_button(
-        "Download Full PDF Report",
-        data=pdf_data,
-        file_name="teamreadi_results.pdf",
-        mime="application/pdf",
-    )
+st.write("")
 
-with col_back:
-    st.link_button(
-        "Return to Start",
-        url="https://teamreadi.streamlit.app",
+if st.button("Return to Start"):
+    for k in RESET_KEYS:
+        st.session_state.pop(k, None)
+    st.markdown(
+        """
+        <script>
+        window.location.replace("https://teamreadi.streamlit.app");
+        </script>
+        """,
+        unsafe_allow_html=True,
     )
+    st.stop()
