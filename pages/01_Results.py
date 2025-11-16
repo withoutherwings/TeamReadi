@@ -101,19 +101,46 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
 
     return sorted(tags)
 
-
 def infer_project_name_from_inputs(
     req_files: List[Any],
     req_url: Optional[str],
     job_text: str,
 ) -> str:
     """
-    Try to infer a project name from:
-      1) RFP file name,
-      2) URL tail,
-      3) first reasonably short line in the RFP text that mentions 'project'.
+    Choose a clean, human-friendly project name.
+
+    Priority:
+      1) Lines mentioning 'Infrastructure Upgrades' and a Medical Center / VAMC
+      2) Lines with 'Upgrades' + a dash (project – location)
+      3) Fallback to uploaded file name or URL tail
     """
-    # 1) From uploaded file name
+
+    def _clean_line(s: str) -> str:
+        s = s.strip()
+        # If there's an ' at ' or ' – ' we usually want the part before location
+        low = s.lower()
+        if " at " in low:
+            return s.split(" at ")[0].strip()
+        if " – " in s:
+            return s.split(" – ")[0].strip()
+        if " - " in s:
+            return s.split(" - ")[0].strip()
+        return s
+
+    lines = [ln.strip() for ln in (job_text or "").splitlines() if ln.strip()]
+
+    # 1) Look for explicit Infrastructure Upgrades at a VAMC / Medical Center
+    for ln in lines:
+        low = ln.lower()
+        if "infrastructure upgrades" in low and ("medical center" in low or "vamc" in low):
+            return _clean_line(ln)
+
+    # 2) Generic "Upgrades" lines with dash
+    for ln in lines:
+        if "upgrades" in ln and (" - " in ln or " – " in ln):
+            return _clean_line(ln)
+
+    # 3) Fallback: RFP filename
     if req_files:
         first = req_files[0]
         name = getattr(first, "name", "") or getattr(first, "filename", "")
@@ -122,22 +149,13 @@ def infer_project_name_from_inputs(
         if cleaned:
             return cleaned
 
-    # 2) From URL
+    # 4) Fallback: URL tail
     if req_url:
         path = str(req_url).rstrip("/").split("/")[-1]
         base = filename_stem(path)
         cleaned = re.sub(r"[_\-]+", " ", base).strip()
         if cleaned:
             return cleaned
-
-    # 3) From RFP text
-    for line in (job_text or "").splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        low = s.lower()
-        if "project" in low and len(s) <= 120:
-            return s
 
     return ""
 
@@ -948,14 +966,13 @@ st.download_button(
 st.write("")
 
 if st.button("Return to Start"):
+    # Clear session keys used by the app
     for k in RESET_KEYS:
         st.session_state.pop(k, None)
-    st.markdown(
-        """
-        <script>
-        window.location.replace("https://teamreadi.streamlit.app");
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.stop()
+
+    try:
+        # If you're on Streamlit 1.27+ with multipage support
+        st.switch_page("app.py")   # or "Home.py" depending on your main file name
+    except Exception:
+        # Fallback: simple query-param reset to root
+        st.experimental_set_query_params()
