@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Set
 
 from openai import OpenAI
 
-USE_LLM = False  # <-- flip to True only when you want real runs
+USE_LLM = True  # <-- flip to True only when you want real runs
 
 def _llm_json(prompt: str) -> dict:
     """
@@ -41,6 +41,52 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 
 client = OpenAI(api_key=API_KEY)
+
+# ---- Heuristics to separate company-level vs person-level requirements ----
+
+COMPANY_LEVEL_KEYWORDS = [
+    "sdvosb",
+    "service-disabled veteran",
+    "service disabled veteran",
+    "woman-owned",
+    "women owned",
+    "wosb",
+    "hubzone",
+    "8(a)",
+    "8a ",
+    "small business set-aside",
+    "set-aside",
+    "dbe ",
+    "mbe ",
+    "wbe ",
+    "far compliance",
+    "federal acquisition regulation",
+    "far part",
+    "cage code",
+    "sam.gov",
+    "sam registration",
+    "bonding capacity",
+    "insurance coverage",
+]
+
+
+def _is_company_level_requirement(text: str) -> bool:
+    t = str(text).lower()
+    return any(kw in t for kw in COMPANY_LEVEL_KEYWORDS)
+
+
+def _split_person_vs_company(requirements) -> tuple[list[str], list[str]]:
+    person: list[str] = []
+    company: list[str] = []
+    for r in requirements or []:
+        s = str(r).strip()
+        if not s:
+            continue
+        if _is_company_level_requirement(s):
+            company.append(s)
+        else:
+            person.append(s)
+    return person, company
 
 
 # ---------------------------------------------------------------------------
@@ -106,101 +152,108 @@ def _llm_json(prompt: str) -> Dict[str, Any]:
 # Project profile
 # ---------------------------------------------------------------------------
 
-def build_project_profile(project_text: str) -> Dict[str, Any]:
-    """
-    Parse the RFP / project description into a project profile:
+from typing import Dict, Any  # make sure this import exists at top
 
-    {
-      "project_summary": str,
-      "must_have_skills": [str, ...],
-      "nice_to_have_skills": [str, ...],
-      "role_mix_by_bucket": {bucket: int}
-    }
+
+def build_project_profile(job_text: str) -> Dict[str, Any]:
     """
-    trimmed = (project_text or "").strip()
-    if not trimmed:
+    Use the LLM (or a stub when USE_LLM is False) to summarize the RFP and
+    extract structured fields for the rest of the pipeline.
+
+    We intentionally keep *person-level* skill requirements separate from
+    company-level business/certification requirements so that candidates
+    are not penalized for SDVOSB status, FAR compliance, etc.
+    """
+    if not job_text:
         return {
+            "project_name": "",
             "project_summary": "",
+            "project_window": "",
+            "project_location": "",
             "must_have_skills": [],
             "nice_to_have_skills": [],
+            "company_requirements": [],
             "role_mix_by_bucket": {},
         }
 
-    trimmed = trimmed[:8000]
-
     prompt = f"""
-You are helping a construction project team staff a role.
+You are analyzing a construction RFP and turning it into structured JSON
+for an internal workforce-planning tool.
 
-You will be given the full text of an RFP / project description.
+RFP TEXT (truncated if very long):
+---
+{job_text[:12000]}
+---
 
-1. Read the RFP carefully.
-2. Write:
-   - "project_summary": THREE paragraphs, separated by a blank line:
-       * Paragraph 1: a concise, factual overview for staffing decisions:
-         owner, facility, city/state, contract type (if given), and the total
-         expected performance period or construction duration, using dates
-         or approximate months if stated. Avoid marketing or funding language.
-       * Paragraph 2: the key scope and technical requirements (major systems,
-         phases, deliverables, constraints, and coordination requirements).
-       * Paragraph 3: role-specific requirements for the construction manager /
-         project manager and key team members, including any required
-         certifications, SDVOSB or other set-aside status, bonding requirements,
-         and federal or regulatory frameworks (e.g., FAR, VAAR, VA, EHRM).
-   - "must_have_skills": 5–10 SHORT phrases for truly essential skills or
-     experience that are clearly required by this RFP (e.g., "FAR compliance",
-     "federal VA project experience", "bid guarantees and performance bonds").
-   - "nice_to_have_skills": 3–8 SHORT phrases that are helpful but not strictly
-     required.
-   - "role_mix_by_bucket": an object whose keys are the fixed buckets
-     "PM/Admin", "Support/Coordination", and "Field/Operator", and whose
-     values are integers estimating how many people in each bucket the project
-     will realistically need at peak
-     (e.g. {{"PM/Admin": 1, "Support/Coordination": 1, "Field/Operator": 2}}).
+Extract:
+
+1. "project_name": a SHORT human-readable project name
+   (e.g. "EHRM Outpatient Clinic Renovation – Asheville VAMC").
+   If no clear name is given, synthesize a concise descriptive name.
+
+2. "project_summary": 2–3 paragraphs describing:
+   - overall scope and purpose,
+   - key technical elements / systems,
+   - any major constraints that matter when assigning people.
+
+3. "project_window": a brief description of the expected duration / period
+   of performance as described in the RFP
+   (e.g. "Design NTP Feb 2026; substantial completion by Oct 2027").
+   If not stated, say "Not clearly stated in RFP."
+
+4. "project_location": city/state or facility name if given
+   (e.g. "Asheville, NC – Charles George VAMC").
+
+5. "must_have_skills": an array of SHORT, PERSON-LEVEL skill or experience
+   requirements for individual team members.
+   - DO NOT include company-level business requirements such as:
+     SDVOSB / WOSB / 8(a) / HUBZone status, small-business set-asides,
+     bonding capacity, insurance limits, or generic "FAR compliance".
+
+6. "nice_to_have_skills": similar array of PERSON-LEVEL nice-to-have skills.
+   (Same rule: ignore company-level certifications and ownership status.)
+
+7. "role_mix_by_bucket": an object with integer counts estimating how many
+   people the OWNER will realistically need at peak in each of three buckets:
+     - "PM/Admin"
+     - "Support/Coordination"
+     - "Field/Operator"
+   Example: {{"PM/Admin": 1, "Support/Coordination": 1, "Field/Operator": 2}}
 
 Return ONLY a valid JSON object with exactly these keys:
-"project_summary", "must_have_skills", "nice_to_have_skills",
-"role_mix_by_bucket".
-
-RFP TEXT:
----
-{trimmed}
----
+"project_name", "project_summary", "project_window", "project_location",
+"must_have_skills", "nice_to_have_skills", "role_mix_by_bucket".
 """
-    data = _llm_json(prompt) or {}
-    if not isinstance(data, dict):
-        data = {}
 
-    # --- project_summary: coerce list -> string safely ---
+    data = _llm_json(prompt) or {}
+
+    raw_must = data.get("must_have_skills") or []
+    raw_nice = data.get("nice_to_have_skills") or []
+
+    must_person, must_company = _split_person_vs_company(raw_must)
+    nice_person, nice_company = _split_person_vs_company(raw_nice)
+
+    # Be defensive about weird LLM shapes
     raw_summary = data.get("project_summary", "")
     if isinstance(raw_summary, list):
-        raw_summary = "\n\n".join(
-            str(p).strip() for p in raw_summary if str(p).strip()
-        )
-    project_summary = str(raw_summary or "").strip()
+        project_summary = " ".join(str(x) for x in raw_summary)
+    else:
+        project_summary = str(raw_summary)
 
-    # --- must_have_skills: ensure list of strings ---
-    raw_must = data.get("must_have_skills") or []
-    if isinstance(raw_must, str):
-        raw_must = [raw_must]
-    must_have = [str(s).strip() for s in raw_must if str(s).strip()]
-
-    # --- nice_to_have_skills: ensure list of strings ---
-    raw_nice = data.get("nice_to_have_skills") or []
-    if isinstance(raw_nice, str):
-        raw_nice = [raw_nice]
-    nice_to_have = [str(s).strip() for s in raw_nice if str(s).strip()]
-
-    # --- role mix: make sure it’s a dict ---
-    role_mix = data.get("role_mix_by_bucket") or {}
-    if not isinstance(role_mix, dict):
-        role_mix = {}
-
-    return {
-        "project_summary": project_summary,
-        "must_have_skills": must_have,
-        "nice_to_have_skills": nice_to_have,
-        "role_mix_by_bucket": role_mix,
+    profile: Dict[str, Any] = {
+        "project_name": str(data.get("project_name") or "").strip(),
+        "project_summary": project_summary.strip(),
+        "project_window": str(data.get("project_window") or "").strip(),
+        "project_location": str(data.get("project_location") or "").strip(),
+        # Only person-level items feed into skill matching and highlights:
+        "must_have_skills": must_person,
+        "nice_to_have_skills": nice_person,
+        # Company-level requirements kept for the project summary page:
+        "company_requirements": must_company + nice_company,
+        "role_mix_by_bucket": data.get("role_mix_by_bucket") or {},
     }
+    return profile
+
 
 
 # ---------------------------------------------------------------------------
