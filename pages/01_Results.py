@@ -1,4 +1,4 @@
-# pages/01_Results.py — ReadiReport (ranked tiles + PDF, using new pipeline helpers)
+# pages/01_Results.py — ReadiReport (ranked tiles + PDF, using new pipeline helpers) 
 
 import os, io, re, json, requests
 import datetime as dt
@@ -357,8 +357,9 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         header()
         y = h - 130
 
+        display_name = format_employee_label(r["emp_id"])
         c.setFont("Helvetica-Bold", 14)
-        c.drawString(72, y, f"{r['emp_id']}")
+        c.drawString(72, y, display_name)
         y -= 18
 
         c.setFont("Helvetica", 10)
@@ -658,6 +659,7 @@ for b in BUCKET_ORDER:
     for i, r in enumerate(group):
         col = cols[i % 4]
         with col:
+            display_name = format_employee_label(r["emp_id"])
             hl = r.get("highlights", [])
             lines = []
             for h in hl:
@@ -678,7 +680,7 @@ for b in BUCKET_ORDER:
   min-height:170px;
 ">
   <div style="font-size:1.4rem;font-weight:800;color:#FF8A1E;">
-    {r["emp_id"]}
+    {display_name}
   </div>
   <div style="font-size:1.4rem;font-weight:800;margin:2px 0 4px;">
     ReadiScore: {int(r["readiscore"]*100)}%
