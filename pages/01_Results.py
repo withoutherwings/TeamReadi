@@ -294,10 +294,12 @@ def busy_blocks_from_ics_for_employee(
             if not any(tag in summary for tag in tag_list):
                 continue
 
-        if isinstance(dtstart, dt.date)) and not isinstance(dtstart, dt.datetime):
-            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
-        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
-            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
+if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
+    dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
+
+if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
+    dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
+
 
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
