@@ -7,7 +7,7 @@ LLM-powered helpers:
 - compute_skill_match(project_must_have, candidate_skills)
 
 We *don’t* rely on OpenAI JSON mode here, because the current library
-version is routing through Responses.create in a way that doesn’t accept
+version routes through Responses.create in a way that doesn’t accept
 `response_format`. Instead, we enforce JSON in the prompt and parse it
 manually, with safe fallbacks.
 """
@@ -65,12 +65,17 @@ def _llm_json(prompt: str) -> Dict[str, Any]:
             temperature=0.15,
         )
         text = resp.choices[0].message.content.strip()
-        # Strip possible markdown fences
+
+        # Strip possible markdown code fences
         if text.startswith("```"):
-            text = text.strip("`")
-            # after stripping backticks, there may still be leading "json\n"
-            if text.lower().startswith("json"):
-                text = text.split("\n", 1)[1]
+            # remove leading/trailing code fence lines
+            # e.g. ```json\n{...}\n```
+            parts = text.strip("`").split("\n", 1)
+            if len(parts) == 2 and parts[0].lower().startswith("json"):
+                text = parts[1]
+            else:
+                text = "\n".join(parts[1:]) if len(parts) > 1 else parts[0]
+
         return json.loads(text)
     except Exception as e:
         print(f"[TeamReadi] _llm_json error: {e}")
@@ -104,9 +109,20 @@ You will be given the full text of an RFP / project description.
 
 1. Read the RFP carefully.
 2. Write:
-   - "project_summary": 3–5 sentences describing scope, context, major tasks.
-   - "must_have_skills": 5–10 SHORT phrases for truly essential skills/experience.
-   - "nice_to_have_skills": 3–8 SHORT phrases that are helpful but not required.
+   - "project_summary": THREE paragraphs:
+       * Paragraph 1: a general overview of the project (owner, facility,
+         location/context, and the high-level purpose of the work).
+       * Paragraph 2: the key scope and technical requirements (major systems,
+         phases, deliverables, constraints, and coordination requirements).
+       * Paragraph 3: role-specific requirements for the construction manager /
+         project manager, including any required certifications, SDVOSB or other
+         set-aside status, bonding requirements, and federal or regulatory
+         frameworks (e.g., FAR, VA, EHRM).
+   - "must_have_skills": 5–10 SHORT phrases for truly essential skills or
+     experience that are clearly required by this RFP (e.g., "FAR compliance",
+     "federal VA project experience", "bid guarantees and performance bonds").
+   - "nice_to_have_skills": 3–8 SHORT phrases that are helpful but not strictly
+     required.
 
 Return ONLY a valid JSON object with exactly these keys:
 "project_summary", "must_have_skills", "nice_to_have_skills".
@@ -144,8 +160,7 @@ def build_candidate_profile(resume_text: str, project_profile: Dict[str, Any]) -
       "skill_match_percent": float
     }
     """
-    trimmed_resume = (resume_text or "").strip()
-    trimmed_resume = trimmed_resume[:8000]
+    trimmed_resume = (resume_text or "").strip()[:8000]
 
     project_summary = project_profile.get("project_summary", "")
     must_have_skills = project_profile.get("must_have_skills", []) or []
@@ -176,10 +191,12 @@ Your tasks:
 2. Decide which MUST-HAVE skills are clearly missing or too weak.
 3. Extract 10–20 SHORT "candidate_skills" phrases that describe this candidate,
    focusing on project-relevant hard and soft skills.
-4. Write "candidate_summary": 1–3 sentences about how well this person fits this project.
+4. Write "candidate_summary": 1–3 sentences about how well this person fits
+   this specific project.
 5. Write 3–6 SHORT bullet phrases under "strengths" focused on this project.
 6. Write 3–6 SHORT bullet phrases under "gaps" focused on this project.
-7. Compute "skill_match_percent" = 100 * (# MUST-HAVE skills met) / (total MUST-HAVE).
+7. Compute "skill_match_percent" = 100 * (# MUST-HAVE skills met) /
+   (total MUST-HAVE).
 
 Return ONLY a JSON object with keys:
 "candidate_summary",
