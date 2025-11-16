@@ -972,7 +972,7 @@ if st.button("Return to Start"):
 
     try:
         # If you're on Streamlit 1.27+ with multipage support
-        st.switch_page("app.py")   # or "Home.py" depending on your main file name
+        st.switch_page("streamlit_app.py")   # or "Home.py" depending on your main file name
     except Exception:
         # Fallback: simple query-param reset to root
         st.experimental_set_query_params()
