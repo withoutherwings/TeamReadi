@@ -776,6 +776,7 @@ for b in BUCKET_ORDER:
 # PDF + bottom buttons
 # ---------------------------------------------------------------------------
 
+# Fallback role_counts from actual candidates (used only if role_mix from RFP is empty)
 role_counts: Dict[str, int] = {}
 for r in results:
     bucket = r.get("role_bucket", "Out-of-scope")
@@ -788,25 +789,36 @@ params = {
     "max_hours": st.session_state.get("max_hours", 8),
     "window_baseline": window_baseline,
     "project_summary": project_profile.get("project_summary", ""),
+    # NEW: role mix inferred from RFP (with candidate buckets as fallback)
+    "role_mix": project_profile.get("role_mix_by_bucket", {}),
     "role_counts": role_counts,
 }
 
-col_dl, col_reset = st.columns([1, 1])
-
-with col_dl:
+# Center both buttons under the tiles
+col_left, col_center, col_right = st.columns([1, 2, 1])
+with col_center:
+    pdf_data = build_pdf(results, params)
     st.download_button(
         "Download Full PDF Report",
-        data=build_pdf(results, params),
+        data=pdf_data,
         file_name="teamreadi_results.pdf",
         mime="application/pdf",
     )
 
-with col_reset:
+    st.write("")  # small vertical space
+
     if st.button("Return to Start"):
+        # Clear session keys so the landing page starts clean
         for k in RESET_KEYS:
             st.session_state.pop(k, None)
+
+        # Hard redirect back to the root app URL
         st.markdown(
-            "<meta http-equiv='refresh' content='0; URL=https://teamreadi.streamlit.app/'>",
+            """
+            <script>
+            window.location.href = "https://teamreadi.streamlit.app";
+            </script>
+            """,
             unsafe_allow_html=True,
         )
         st.stop()
