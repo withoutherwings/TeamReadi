@@ -5,3 +5,4 @@ icalendar
 openai>=1.40.0
 pandas
 reportlab
+beautifulsoup4
