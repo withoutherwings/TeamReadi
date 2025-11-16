@@ -13,6 +13,26 @@ from typing import Dict, List, Any, Set
 
 from openai import OpenAI
 
+USE_LLM = False  # <-- flip to True only when you want real runs
+
+def _llm_json(prompt: str) -> dict:
+    """
+    Call OpenAI to get structured JSON. When USE_LLM is False,
+    return a cheap stub so we don't burn tokens while debugging.
+    """
+    if not USE_LLM:
+        # Minimal stub so the rest of the code doesn't crash
+        return {
+            "project_summary": "",
+            "must_have_skills": [],
+            "nice_to_have_skills": [],
+            "role_mix_by_bucket": {
+                "PM/Admin": 1,
+                "Support/Coordination": 1,
+                "Field/Operator": 1,
+            },
+        }
+
 # ---------------------------------------------------------------------------
 # OpenAI client
 # ---------------------------------------------------------------------------
