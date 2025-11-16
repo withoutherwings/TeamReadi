@@ -1,77 +1,60 @@
-"""
-pipeline.py
-High-level TeamReadi pipeline:
-- Project text + resumes -> skill_match results via LLM
-- Calendar -> availability
-- Combine into ReadiScore and sorted ranking
+"""TeamReadi backend pipeline.
+
+This module provides a *thin* wrapper around the OpenAI API so the rest of the
+app can stay simple.  The key ideas:
+
+- `build_project_profile(project_text)`:
+    Use the LLM once to turn an RFP / project description into a compact
+    summary + list of must-have / nice-to-have skills.
+
+- `build_candidate_profile(resume_text, project_profile)`:
+    Use the LLM once per resume, conditioned on the project profile, to decide:
+      * what skills the candidate has
+      * which of the MUST-HAVE skills they meet / miss
+      * a short narrative summary of their fit
+
+- `compute_skill_match(...)`:
+    Kept for backwards-compatibility, but we now prefer the LLM-supplied
+    `skill_match_percent` coming out of `build_candidate_profile`.
+
+Everything is designed so that, if the LLM call fails for any reason, we fall
+back to safe defaults instead of crashing the app.
 """
 
 import os
 import json
-import datetime as dt
 from typing import Dict, List, Any, Set
 
 from openai import OpenAI
 
-from backend.calendar_backend import (
-    fetch_calendar_hours_by_employee,
-    compute_metrics_for_employee,
-)
 
-# ----------------- OpenAI client setup -----------------
+# ---------------------------------------------------------------------------
+# OpenAI client
+# ---------------------------------------------------------------------------
 
-API_KEY = os.getenv("OPENAI_API_KEY")
-if not API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY is not set. Please configure it in your environment or Streamlit secrets."
-    )
+API_KEY = os.getenv("OPENAI_API_KEY")  # Streamlit already validates this
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 
 client = OpenAI(api_key=API_KEY)
 
-# You can adjust this if you want to use a different model
-MODEL_NAME = os.getenv("TEAMREADI_MODEL_NAME", "gpt-4.1-mini")
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_phrase_list(items: List[str]) -> Set[str]:
+    return {str(x).strip().lower() for x in (items or []) if str(x).strip()}
 
 
-# ----------------- Helper functions -----------------
+def compute_skill_match(project_must_have: List[str], candidate_skills: List[str]) -> float:
+    """Simple lexical overlap score kept as a fallback.
 
-
-def _normalize_phrase_list(skills: List[str]) -> Set[str]:
-    """
-    Simple normalization: lowercase, strip, remove duplicates.
-    This is intentionally simple; we can upgrade to embeddings later.
-    """
-    norm: Set[str] = set()
-    for s in skills:
-        if not isinstance(s, str):
-            continue
-        tokens = s.lower().strip()
-        if tokens:
-            norm.add(tokens)
-    return norm
-
-
-def compute_skill_match(
-    project_must_have: List[str],
-    candidate_skills: List[str],
-) -> float:
-    """
-    Return a percentage [0,100] representing how many must-have skills
-    the candidate appears to cover.
-
-    For now this uses phrase overlap after normalization, where
-    project_must_have comes from the LLM-derived project profile and
-    candidate_skills comes from the LLM-derived candidate profile.
-
-    (So *semantic* matching is happening when the LLM decides which
-    phrases to put in each list; this function just turns that into
-    a numeric score.)
+    Returns a percentage 0–100 based on overlap between the two lists.
     """
     proj_set = _normalize_phrase_list(project_must_have)
     cand_set = _normalize_phrase_list(candidate_skills)
 
     if not proj_set:
-        # Avoid division by zero; if you have no defined must-haves,
-        # treat skill match as 0 for now (or adjust to 50 if you prefer neutral).
         return 0.0
 
     overlap = proj_set.intersection(cand_set)
@@ -79,20 +62,28 @@ def compute_skill_match(
     return round(score, 1)
 
 
-# ----------------- LLM-based project & candidate profiles -----------------
-
+# ---------------------------------------------------------------------------
+# LLM-based project & candidate profiles
+# ---------------------------------------------------------------------------
 
 def build_project_profile(project_text: str) -> Dict[str, Any]:
-    """
-    Use the LLM to create a compact project profile:
-    - short summary
-    - must-have skills
-    - nice-to-have skills
+    """Turn raw RFP / project text into a structured project profile.
 
-    This replaces the old 'extract_project_requirements' behavior.
+    Output:
+        {
+          "project_summary": str,
+          "must_have_skills": [str, ...],
+          "nice_to_have_skills": [str, ...],
+        }
     """
-    # Truncate to keep the prompt manageable
-    trimmed_text = project_text[:8000] if project_text else ""
+    trimmed_text = (project_text or "")[:8000]
+
+    if not trimmed_text:
+        return {
+            "project_summary": "",
+            "must_have_skills": [],
+            "nice_to_have_skills": [],
+        }
 
     prompt = f"""
 You are helping a construction management team staff a project.
@@ -107,25 +98,24 @@ and output a JSON object with:
 Guidelines for the skill phrases:
 - Keep them short, not full sentences.
 - They should be grounded in the RFP text (do not hallucinate wildly).
-- Examples:
-  - "construction project scheduling (Primavera P6)"
-  - "DOT facilities experience"
-  - "contract administration and RFI management"
-  - "field inspection of civil works"
-  - "quantity takeoffs and cost estimating"
+- Use the terminology that appears in the RFP when possible.
 
-RFP TEXT:
-\"\"\"{trimmed_text}\"\"\""""
+RFP TEXT (verbatim):
+{trimmed_text}
+
+Return ONLY valid JSON with keys exactly:
+"project_summary", "must_have_skills", "nice_to_have_skills".
+"""  # noqa: E501
     try:
-        resp = client.responses.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
-            input=prompt,
+            messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
+            temperature=0.1,
         )
-        raw_text = resp.output[0].content[0].text
+        raw_text = resp.choices[0].message.content
         data = json.loads(raw_text)
-    except Exception as e:
-        # Fail safe: if LLM call fails, return something minimal
+    except Exception as e:  # defensive fallback
         print(f"[TeamReadi] build_project_profile LLM error: {e}")
         data = {
             "project_summary": trimmed_text[:500],
@@ -134,12 +124,8 @@ RFP TEXT:
         }
 
     project_summary = (data.get("project_summary") or "").strip()
-    must_have = data.get("must_have_skills") or []
-    nice_to_have = data.get("nice_to_have_skills") or []
-
-    # Normalize lists to ensure strings
-    must_have = [str(s).strip() for s in must_have if str(s).strip()]
-    nice_to_have = [str(s).strip() for s in nice_to_have if str(s).strip()]
+    must_have = [str(s).strip() for s in (data.get("must_have_skills") or []) if str(s).strip()]
+    nice_to_have = [str(s).strip() for s in (data.get("nice_to_have_skills") or []) if str(s).strip()]
 
     return {
         "project_summary": project_summary,
@@ -148,24 +134,30 @@ RFP TEXT:
     }
 
 
-def build_candidate_profile(
-    resume_text: str,
-    project_profile: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Produce a clean candidate profile:
-    - candidate_summary (1–3 sentences)
-    - candidate_skills (10–20 short phrases)
-    - strengths (3–6 short phrases tied to project needs)
-    - gaps (3–6 short phrases tied to project needs)
+def build_candidate_profile(resume_text: str, project_profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Evaluate ONE candidate resume against the project.
 
-    This replaces the old 'score_resume_against_requirements' behavior.
+    Inputs:
+        resume_text: full text of a single candidate CV / resume
+        project_profile: output from `build_project_profile`
+
+    Output JSON (keys are important; the UI expects these):
+
+        {
+          "candidate_summary": str,        # 1–3 sentences
+          "candidate_skills": [str, ...],  # 10–20 short phrases
+          "strengths": [str, ...],         # 3–6 bullets, project-specific
+          "gaps": [str, ...],              # 3–6 bullets, project-specific
+          "matched_must_have_skills": [str, ...],   # subset of project_profile["must_have_skills"]
+          "missing_must_have_skills": [str, ...],   # subset of project_profile["must_have_skills"]
+          "skill_match_percent": float     # 0–100, based ONLY on MUST-HAVE skills
+        }
     """
-    trimmed_resume = resume_text[:8000] if resume_text else ""
+    trimmed_resume = (resume_text or "")[:8000]
 
     project_summary = project_profile.get("project_summary", "")
-    must_have_skills = project_profile.get("must_have_skills", [])
-    nice_to_have_skills = project_profile.get("nice_to_have_skills", [])
+    must_have_skills = project_profile.get("must_have_skills", []) or []
+    nice_to_have_skills = project_profile.get("nice_to_have_skills", []) or []
 
     prompt = f"""
 You are evaluating a candidate for a construction project.
@@ -177,195 +169,116 @@ You are given:
 PROJECT SUMMARY:
 {project_summary}
 
-MUST-HAVE SKILLS:
+MUST-HAVE SKILLS (these drive the numeric match score):
 {must_have_skills}
 
 NICE-TO-HAVE SKILLS:
 {nice_to_have_skills}
 
 CANDIDATE RESUME TEXT:
-\"\"\"{trimmed_resume}\"\"\"
+{trimmed_resume}
 
+Task:
+1. Decide which of the MUST-HAVE skills the candidate clearly meets.
+2. Decide which of the MUST-HAVE skills are clearly missing or too weak.
+3. Extract 10–20 short "candidate_skills" phrases that best describe this
+   person in the context of this project.
+4. Write a short 1–3 sentence "candidate_summary" explaining their fit.
+5. Write 3–6 short bullet "strengths" focused on project-relevant strengths.
+6. Write 3–6 short bullet "gaps" focused on limitations or risks for this project.
+7. Compute `skill_match_percent` as:
+   100 * (number of MUST-HAVE skills met) / (total MUST-HAVE skills).
 
-Return ONLY a JSON object with:
+Return ONLY a JSON object with keys exactly:
+- "candidate_summary"
+- "candidate_skills"
+- "strengths"
+- "gaps"
+- "matched_must_have_skills"   # list of phrases from MUST-HAVE SKILLS the candidate meets
+- "missing_must_have_skills"   # list of phrases from MUST-HAVE SKILLS the candidate does NOT meet
+- "skill_match_percent"        # numeric 0–100, based ONLY on MUST-HAVE skills
+"""  # noqa: E501
 
-- "candidate_summary": 1–3 sentences summarizing the candidate's background relevant to this project.
-- "candidate_skills": 10–20 short skills or experience phrases derived from the resume
-  (grounded in the resume, not hallucinated).
-- "strengths": 3–6 short phrases explaining where this candidate aligns WELL with the project needs.
-- "gaps": 3–6 short phrases explaining what is MISSING relative to the project needs.
-
-All items in lists must be short, human-readable phrases, not full sentences.
-"""
     try:
-        resp = client.responses.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
-            input=prompt,
+            messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
+            temperature=0.1,
         )
-        raw_text = resp.output[0].content[0].text
+        raw_text = resp.choices[0].message.content
         data = json.loads(raw_text)
-    except Exception as e:
+    except Exception as e:  # defensive fallback
         print(f"[TeamReadi] build_candidate_profile LLM error: {e}")
         data = {
             "candidate_summary": "",
             "candidate_skills": [],
             "strengths": [],
             "gaps": [],
+            "matched_must_have_skills": [],
+            "missing_must_have_skills": [],
+            "skill_match_percent": None,
         }
 
     candidate_summary = (data.get("candidate_summary") or "").strip()
-    candidate_skills = data.get("candidate_skills") or []
-    strengths = data.get("strengths") or []
-    gaps = data.get("gaps") or []
+    candidate_skills = [str(s).strip() for s in (data.get("candidate_skills") or []) if str(s).strip()]
+    strengths = [str(s).strip() for s in (data.get("strengths") or []) if str(s).strip()]
+    gaps = [str(s).strip() for s in (data.get("gaps") or []) if str(s).strip()]
+    matched = [str(s).strip() for s in (data.get("matched_must_have_skills") or []) if str(s).strip()]
+    missing = [str(s).strip() for s in (data.get("missing_must_have_skills") or []) if str(s).strip()]
+    skill_match_percent = data.get("skill_match_percent")
 
-    candidate_skills = [str(s).strip() for s in candidate_skills if str(s).strip()]
-    strengths = [str(s).strip() for s in strengths if str(s).strip()]
-    gaps = [str(s).strip() for s in gaps if str(s).strip()]
+    # Fallback if the model did not return a numeric score
+    try:
+        skill_match_percent = float(skill_match_percent)
+    except (TypeError, ValueError):
+        # Compute from lists if possible, else fall back to lexical overlap
+        if must_have_skills:
+            matched_norm = _normalize_phrase_list(matched)
+            must_norm = _normalize_phrase_list(must_have_skills)
+            pct = 100.0 * (len(must_norm.intersection(matched_norm)) / max(1, len(must_norm)))
+            skill_match_percent = round(pct, 1)
+        else:
+            skill_match_percent = compute_skill_match(must_have_skills, candidate_skills)
 
     return {
         "candidate_summary": candidate_summary,
         "candidate_skills": candidate_skills,
         "strengths": strengths,
         "gaps": gaps,
+        "matched_must_have_skills": matched,
+        "missing_must_have_skills": missing,
+        "skill_match_percent": float(skill_match_percent),
     }
 
 
-# ----------------- Skill results builder (optional, used by old pipeline) -----------------
+# ---------------------------------------------------------------------------
+# Optional: high-level pipeline (still used by some experiments / tests)
+# ---------------------------------------------------------------------------
 
+def run_teamreadi_pipeline(project_text: str, resumes: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Legacy helper kept for completeness.
 
-def build_skill_results(
-    project_text: str,
-    resumes: Dict[str, str],
-) -> Dict[str, dict]:
+    The Streamlit page now assembles most of the pieces itself, but this
+    function is still useful for debugging or offline tests.
     """
-    project_text: full text of project RFP/spec
-    resumes: {"Employee_001": "full resume text", ...}
-
-    Returns dict:
-    {
-        "Employee_001": {
-            "skill_match_pct": float,
-            "highlights": [{"skill": str, "met": bool}, ...],
-            "candidate_summary": str,
-            "strengths": [str, ...],
-            "gaps": [str, ...],
-            "candidate_skills": [str, ...],
-            "project_profile": {...}  # same object for all employees
-        },
-        ...
-    }
-    """
-    # 1) Derive a structured project profile once
     project_profile = build_project_profile(project_text)
+    rows: List[Dict[str, Any]] = []
 
-    results: Dict[str, dict] = {}
-
-    for emp_id, resume_text in resumes.items():
-        # 2) Build a candidate profile for each resume
+    for emp_id, resume_text in (resumes or {}).items():
         cand_profile = build_candidate_profile(resume_text, project_profile)
-
-        # 3) Compute numeric skill match using project must-haves vs candidate skills
-        skill_match_pct = compute_skill_match(
-            project_profile.get("must_have_skills", []),
-            cand_profile.get("candidate_skills", []),
-        )
-
-        # 4) Build "highlights" list:
-        #    [{"skill": <must-have-skill>, "met": True/False}, ...]
-        highlights = []
-        proj_must = project_profile.get("must_have_skills", [])
-        cand_skill_set = _normalize_phrase_list(
-            cand_profile.get("candidate_skills", [])
-        )
-
-        for s in proj_must:
-            skill_label = str(s).strip()
-            if not skill_label:
-                continue
-            met = skill_label.lower().strip() in cand_skill_set
-            highlights.append({"skill": skill_label, "met": met})
-
-        results[emp_id] = {
-            "skill_match_pct": float(skill_match_pct),
-            "highlights": highlights,
-            "candidate_summary": cand_profile["candidate_summary"],
-            "strengths": cand_profile["strengths"],
-            "gaps": cand_profile["gaps"],
-            "candidate_skills": cand_profile["candidate_skills"],
-            "project_profile": project_profile,
-        }
-
-    return results
-
-
-# ----------------- Main pipeline entrypoint (for legacy callers) -----------------
-
-
-def run_teamreadi_pipeline(
-    calendar_url: str,
-    start_date: dt.date,
-    end_date: dt.date,
-    working_days: Set[int],
-    hours_per_day: float,
-    project_text: str,
-    resumes: Dict[str, str],
-    tz_name: str = "America/New_York",
-):
-    """
-    Full end-to-end run:
-    - derive skill match from project + resumes via LLM
-    - derive availability from calendar
-    - compute ReadiScore
-    - return ranked list of employees
-
-    Kept for backward compatibility with older pages.
-    """
-    # 1) Skill side (LLM-based)
-    skill_results = build_skill_results(project_text, resumes)
-    employee_ids = list(skill_results.keys())
-
-    # 2) Calendar side (unchanged)
-    calendar_data = fetch_calendar_hours_by_employee(
-        ics_url=calendar_url,
-        employee_ids=employee_ids,
-        window_start=dt.datetime.combine(start_date, dt.time(0, 0)),
-        window_end=dt.datetime.combine(end_date, dt.time(23, 59)),
-        working_days=working_days,
-        hours_per_day=hours_per_day,
-        tz_name=tz_name,
-    )
-
-    # 3) Combine into metrics + ranking
-    rows = []
-    for emp_id in employee_ids:
-        s_res = skill_results[emp_id]
-        skill_match_pct = s_res["skill_match_pct"]
-        highlights = s_res["highlights"]
-
-        emp_data = calendar_data.get(
-            emp_id,
-            {"booked_hours": 0.0, "capacity_hours": 0.0, "events": []},
-        )
-
-        metrics = compute_metrics_for_employee(emp_data, skill_match_pct)
+        skillfit = cand_profile.get("skill_match_percent", 0.0) / 100.0
 
         rows.append(
             {
-                "employee_id": emp_id,
-                "metrics": metrics,
-                "highlights": highlights,
-                "llm_profile": {
-                    "candidate_summary": s_res["candidate_summary"],
-                    "strengths": s_res["strengths"],
-                    "gaps": s_res["gaps"],
-                    "candidate_skills": s_res["candidate_skills"],
-                    "project_profile": s_res["project_profile"],
+                "id": emp_id,
+                "profile": cand_profile,
+                "metrics": {
+                    "skillfit": skillfit,
+                    "readiscore": skillfit,  # availability is not handled here
                 },
             }
         )
 
-    rows_sorted = sorted(
-        rows, key=lambda r: r["metrics"]["readiscore"], reverse=True
-    )
+    rows_sorted = sorted(rows, key=lambda r: r["metrics"]["readiscore"], reverse=True)
     return rows_sorted
