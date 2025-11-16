@@ -18,6 +18,13 @@ from backend.pipeline import (
     compute_skill_match,
 )
 
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
+
+# Make sure page config is set once, at the top
+st.set_page_config(page_title="TeamReadi — Results", layout="wide")
+
+
 # ---------------------------------------------------------------------------
 # Label / ID helpers
 # ---------------------------------------------------------------------------
@@ -179,8 +186,6 @@ workdays_l = st.session_state["workdays"]
 max_hours = st.session_state["max_hours"]
 alpha = st.session_state["alpha"] or 0.7
 
-# ---------- UI shell ----------
-st.set_page_config(page_title="TeamReadi — Results", layout="wide")
 
 # ---------------------------------------------------------------------------
 # Text extraction helpers
@@ -245,7 +250,7 @@ def read_text_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calendar & availability helpers
+# Calendar & availability helpers (CALENDAR = 18 style)
 # ---------------------------------------------------------------------------
 
 def busy_blocks_from_ics_for_employee(
@@ -268,32 +273,42 @@ def busy_blocks_from_ics_for_employee(
     use_tags = len(tag_list) > 0
 
     for comp in cal.walk("VEVENT"):
-        dtstart = comp.get("dtstart").dt
-        dtend = comp.get("dtend").dt
+        # Safely get dtstart / dtend
+        dtstart_prop = comp.get("dtstart")
+        dtend_prop = comp.get("dtend")
+        if not dtstart_prop or not dtend_prop:
+            continue
 
+        dtstart = dtstart_prop.dt
+        dtend = dtend_prop.dt
+
+        # Filter by tags in SUMMARY
         if use_tags:
             summary = str(comp.get("summary", "")).lower()
             if not any(tag in summary for tag in tag_list):
                 continue
 
+        # Normalise "date" values into datetimes
         if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
             dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
         if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
             dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
 
+        # Clip to the scoring window
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
         if e > s and (s.weekday() in working_days or e.weekday() in working_days):
             blocks.append((s, e))
 
+    # Merge overlapping blocks
     blocks.sort(key=lambda x: x[0])
     merged: List[Tuple[dt.datetime, dt.datetime]] = []
-
     for s, e in blocks:
         if not merged or s > merged[-1][1]:
             merged.append((s, e))
         else:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            prev_s, prev_e = merged[-1]
+            merged[-1] = (prev_s, max(prev_e, e))
 
     return merged
 
@@ -304,6 +319,10 @@ def total_work_hours(
     working_days: Set[int],
     max_daily_hours: float,
 ) -> int:
+    """
+    Total *capacity* in hours over the scoring window, assuming max_daily_hours
+    on each working day.
+    """
     cur = window_start
     total = 0.0
     while cur < window_end:
@@ -321,7 +340,14 @@ def remaining_hours_for_employee(
     working_days: Set[int],
     max_hours_per_day: int,
 ) -> int:
-    baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
+    """
+    Baseline capacity (from total_work_hours) minus busy time from calendar.
+
+    If no calendar bytes are provided, we assume the employee is fully available.
+    """
+    baseline = total_work_hours(
+        window_start, window_end, working_days, max_hours_per_day
+    )
     if not ics_bytes:
         return baseline
 
@@ -389,12 +415,8 @@ def build_highlights_from_profiles(
 
 
 # ---------------------------------------------------------------------------
-# PDF report (reverted to clean v16-style layout + project name byline)
+# PDF report (clean v16-style layout + project name byline)
 # ---------------------------------------------------------------------------
-
-from reportlab.lib.pagesizes import LETTER
-from reportlab.pdfgen import canvas
-
 
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     buf = io.BytesIO()
@@ -444,6 +466,23 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     header()
     y = h - 130
 
+    # Optional project window (once, in the summary)
+    project_window = (params.get("project_window") or "").strip()
+    if project_window:
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "RFP project window:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        for line in wrap_text(project_window, 92):
+            if y < 80:
+                c.showPage()
+                header()
+                y = h - 130
+                c.setFont("Helvetica", 10)
+            c.drawString(72, y, line)
+            y -= 14
+        y -= 10
+
     proj_summary = (params.get("project_summary") or "").strip()
     if proj_summary:
         c.setFont("Helvetica-Bold", 12)
@@ -468,6 +507,29 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         y -= 10
 
+    # Company-level requirements
+    company_reqs = params.get("company_requirements") or []
+    if company_reqs:
+        if y < 110:
+            c.showPage()
+            header()
+            y = h - 130
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(72, y, "Company-level requirements / certifications:")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        for req in company_reqs:
+            for line in wrap_text(f"• {req}", 92):
+                if y < 80:
+                    c.showPage()
+                    header()
+                    y = h - 130
+                    c.setFont("Helvetica", 10)
+                c.drawString(72, y, line)
+                y -= 14
+        y -= 10
+
+    # Role mix
     role_mix = params.get("role_mix") or {}
     if not isinstance(role_mix, dict):
         role_mix = {}
@@ -475,7 +537,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         role_mix = params.get("role_counts", {})
 
     if role_mix:
-        if y < 100:
+        if y < 110:
             c.showPage()
             header()
             y = h - 130
@@ -602,12 +664,19 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                 "• Limited availability; may only be suitable for partial "
                 "support on this project."
             )
-        c.drawString(80, y, msg)
-        y -= 22
+        for line in wrap_text(msg, 92):
+            if y < 80:
+                c.showPage()
+                header()
+                y = h - 130
+                c.setFont("Helvetica", 10)
+            c.drawString(80, y, line)
+            y -= 14
 
         # Overall recommendation
         fit = (profile.get("candidate_summary") or r.get("project_fit_summary") or "").strip()
         if fit:
+            y -= 8
             if y < 100:
                 c.showPage()
                 header()
