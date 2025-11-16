@@ -69,45 +69,36 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
     """
     Build a set of loose tags for matching this candidate to calendar events.
 
-    Examples for:
+    Examples:
       stem='Employee_010 Resume.pdf', display_name='Employee 010'
-    might include:
-      'employee 010', 'employee_010', '010'
+      -> 'employee 010', 'employee_010', '010'
 
-    For 'Bob Saget', you'll get:
-      'bob saget', 'bob', 'saget'
-    so that 'Bob - site visit' matches.
+      display_name='Bob Saget'
+      -> 'bob saget', 'bob', 'saget'
     """
     tags: Set[str] = set()
 
-    # Base strings: display name + stem without extension
     bases = []
     for src in (display_name, stem):
         s = (src or "").strip()
         if not s:
             continue
-        s = re.sub(r"\.[A-Za-z0-9]+$", "", s)  # drop extension
+        s = re.sub(r"\.[A-Za-z0-9]+$", "", s)
         bases.append(s)
 
     for base in bases:
-        # Normalize underscores to spaces
         norm = base.replace("_", " ").strip()
         if not norm:
             continue
-
-        # Full normalized string
         tags.add(norm.lower())
 
-        # Split into words
         parts = [p for p in re.split(r"[^A-Za-z0-9]+", norm) if p]
         if len(parts) >= 2:
-            tags.add((parts[0] + " " + parts[1]).lower())  # first + last
-
+            tags.add((parts[0] + " " + parts[1]).lower())
         for p in parts:
-            if len(p) >= 3:   # ignore super-short junk like "cm"
+            if len(p) >= 3:
                 tags.add(p.lower())
 
-    # Explicit Employee ### patterns from stem
     m = re.search(r"(Employee)[ _-]*0*(\d+)", stem, flags=re.IGNORECASE)
     if m:
         num = m.group(2)
@@ -232,7 +223,7 @@ def read_text_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calendar & availability helpers (name-aware, fuzzy)
+# Calendar & availability helpers
 # ---------------------------------------------------------------------------
 
 def busy_blocks_from_ics_for_employee(
@@ -247,7 +238,6 @@ def busy_blocks_from_ics_for_employee(
 
     - If `tags` is provided, we only count events whose SUMMARY contains
       at least one of those tags (case-insensitive).
-    - Tags are loose: 'bob saget', 'bob', 'saget', 'employee 010', etc.
     """
     cal = Calendar.from_ical(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
@@ -323,7 +313,7 @@ def remaining_hours_for_employee(
 
 
 # ---------------------------------------------------------------------------
-# Highlights builder
+# Highlights builder (trust LLM's matched/missing lists)
 # ---------------------------------------------------------------------------
 
 def build_highlights_from_profiles(
@@ -331,28 +321,41 @@ def build_highlights_from_profiles(
     candidate_profile: Dict[str, Any],
     max_items: int = 5,
 ) -> List[Dict[str, Any]]:
+    """
+    Build a small list of highlights for the tiles.
+
+    Priority:
+    1) If the LLM provided matched_must_have_skills / missing_must_have_skills,
+       use those directly – this avoids wording drift between the RFP list and
+       the evaluation.
+    2) Otherwise, fall back to simple overlap between project must-haves and
+       candidate_skills.
+    """
+    matched_raw = candidate_profile.get("matched_must_have_skills")
+    missing_raw = candidate_profile.get("missing_must_have_skills")
+
+    if matched_raw is not None or missing_raw is not None:
+        highlights: List[Dict[str, Any]] = []
+        matched_clean = [str(s).strip() for s in (matched_raw or []) if str(s).strip()]
+        missing_clean = [str(s).strip() for s in (missing_raw or []) if str(s).strip()]
+
+        for label in matched_clean:
+            if len(highlights) >= max_items:
+                break
+            highlights.append({"skill": label, "met": True})
+        for label in missing_clean:
+            if len(highlights) >= max_items:
+                break
+            highlights.append({"skill": label, "met": False})
+
+        if highlights:
+            return highlights
+
     proj_must = [
         str(x).strip()
         for x in project_profile.get("must_have_skills", [])
         if str(x).strip()
     ][:max_items]
-
-    matched_raw = candidate_profile.get("matched_must_have_skills")
-    missing_raw = candidate_profile.get("missing_must_have_skills")
-    if matched_raw is not None or missing_raw is not None:
-        matched_set = {str(s).strip().lower() for s in (matched_raw or []) if str(s).strip()}
-        missing_set = {str(s).strip().lower() for s in (missing_raw or []) if str(s).strip()}
-        highlights: List[Dict[str, Any]] = []
-        for label in proj_must:
-            key = label.lower()
-            if key in matched_set:
-                met = True
-            elif key in missing_set:
-                met = False
-            else:
-                met = False
-            highlights.append({"skill": label, "met": met})
-        return highlights
 
     cand_skills = [
         str(s).strip().lower()
@@ -360,10 +363,12 @@ def build_highlights_from_profiles(
         if str(s).strip()
     ]
     cand_set = set(cand_skills)
+
     highlights: List[Dict[str, Any]] = []
     for label in proj_must:
         met = label.lower() in cand_set
         highlights.append({"skill": label, "met": met})
+
     return highlights
 
 
@@ -416,7 +421,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         y -= 18
         c.setFont("Helvetica", 10)
 
-        # Split into paragraphs on blank lines (LLM should return 3 with blank lines)
         paragraphs = [p.strip() for p in proj_summary.split("\n\n") if p.strip()]
         if not paragraphs:
             paragraphs = [proj_summary.strip()]
@@ -430,23 +434,29 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                     c.setFont("Helvetica", 10)
                 c.drawString(72, y, line)
                 y -= 14
-            y -= 8  # extra space between paragraphs
+            y -= 8
 
         y -= 10
 
-    role_counts = params.get("role_counts", {})
-    if role_counts:
+    role_mix = params.get("role_mix") or {}
+    if not isinstance(role_mix, dict):
+        role_mix = {}
+
+    if not role_mix:
+        role_mix = params.get("role_counts", {})
+
+    if role_mix:
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Submitted candidates by role bucket:")
+        c.drawString(72, y, "Role mix suggested by RFP:")
         y -= 18
         c.setFont("Helvetica", 10)
-        for bucket, count in role_counts.items():
+        for bucket, count in role_mix.items():
             if y < 80:
                 c.showPage()
                 header()
                 y = h - 130
                 c.setFont("Helvetica", 10)
-            c.drawString(80, y, f"- {bucket}: {count} candidate(s)")
+            c.drawString(80, y, f"- {bucket}: {count} role(s)")
             y -= 14
 
     c.showPage()
@@ -589,7 +599,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
-    # Project text from uploaded files or URL
     if req_files:
         parts = [extract_text_from_upload(f) for f in req_files]
         job_text = "\n\n".join(p for p in parts if p)
@@ -776,7 +785,6 @@ for b in BUCKET_ORDER:
 # PDF + bottom buttons
 # ---------------------------------------------------------------------------
 
-# Fallback role_counts from actual candidates (used only if role_mix from RFP is empty)
 role_counts: Dict[str, int] = {}
 for r in results:
     bucket = r.get("role_bucket", "Out-of-scope")
@@ -789,12 +797,10 @@ params = {
     "max_hours": st.session_state.get("max_hours", 8),
     "window_baseline": window_baseline,
     "project_summary": project_profile.get("project_summary", ""),
-    # NEW: role mix inferred from RFP (with candidate buckets as fallback)
     "role_mix": project_profile.get("role_mix_by_bucket", {}),
     "role_counts": role_counts,
 }
 
-# Center both buttons under the tiles
 col_left, col_center, col_right = st.columns([1, 2, 1])
 with col_center:
     pdf_data = build_pdf(results, params)
@@ -805,14 +811,11 @@ with col_center:
         mime="application/pdf",
     )
 
-    st.write("")  # small vertical space
+    st.write("")
 
     if st.button("Return to Start"):
-        # Clear session keys so the landing page starts clean
         for k in RESET_KEYS:
             st.session_state.pop(k, None)
-
-        # Hard redirect back to the root app URL
         st.markdown(
             """
             <script>
