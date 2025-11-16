@@ -19,7 +19,7 @@ from backend.pipeline import (
 )
 
 # ---------------------------------------------------------------------------
-# Small helpers
+# Label helpers
 # ---------------------------------------------------------------------------
 
 def format_employee_label(raw_id: str) -> str:
@@ -30,10 +30,10 @@ def format_employee_label(raw_id: str) -> str:
         return ""
     stem = re.sub(r"\.[A-Za-z0-9]+$", "", raw_id).strip()
     stem = re.sub(r"resume", "", stem, flags=re.IGNORECASE).strip()
-    m = re.match(r"(Employee)[ _-]*(\d+)", stem, flags=re.IGNORECASE)
+    m = re.match(r"(Employee)[ _-]*0*(\d+)", stem, flags=re.IGNORECASE)
     if m:
-        return f"{m.group(1).title()} {m.group(2)}"
-    return stem
+        return f"{m.group(1).title()} {m.group(2).zfill(3)}"
+    return stem or "Employee"
 
 
 def filename_stem(path_or_name: str) -> str:
@@ -41,7 +41,33 @@ def filename_stem(path_or_name: str) -> str:
     return re.sub(r"\.[A-Za-z0-9]+$", "", base)
 
 
-# ---------- Session / params ----------
+def infer_employee_display_name(stem: str, resume_text: str) -> str:
+    """
+    Try to infer a clean display name like 'Employee 001' from the resume text.
+    Fallback to the filename-based label if we can't find it.
+    """
+    lines_checked = 0
+    for line in resume_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        lines_checked += 1
+        if lines_checked > 30:
+            break
+        m = re.search(r"(Employee)[ _-]*0*(\d+)", line, flags=re.IGNORECASE)
+        if m:
+            return f"{m.group(1).title()} {m.group(2).zfill(3)}"
+
+    m2 = re.search(r"(Employee)[ _-]*0*(\d+)", stem, flags=re.IGNORECASE)
+    if m2:
+        return f"{m2.group(1).title()} {m2.group(2).zfill(3)}"
+
+    return format_employee_label(stem)
+
+
+# ---------------------------------------------------------------------------
+# Session / params
+# ---------------------------------------------------------------------------
 
 REQUIRED_KEYS = [
     "resumes",
@@ -89,7 +115,9 @@ st.set_page_config(page_title="TeamReadi — Results", layout="wide")
 st.title("ReadiReport")
 st.caption("PM / Admin Roles")
 
-# ---------- Text extraction helpers ----------
+# ---------------------------------------------------------------------------
+# Text extraction helpers
+# ---------------------------------------------------------------------------
 
 def extract_text_from_pdf_bytes(file_bytes: bytes) -> str:
     text = []
@@ -145,54 +173,59 @@ def read_text_from_url(url: str) -> str:
     content_type = r.headers.get("Content-Type", "")
     if "pdf" in content_type.lower():
         return extract_text_from_pdf_bytes(r.content)
-    # treat as HTML
     soup = BeautifulSoup(r.text, "html.parser")
     return soup.get_text(separator="\n")
 
 
-# ---------- Calendar & availability helpers ----------
-
-def load_ics_from_bytes(b: bytes) -> Calendar:
-    return Calendar.from_ical(b)
-
+# ---------------------------------------------------------------------------
+# Calendar & availability helpers
+# ---------------------------------------------------------------------------
 
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
-    emp_tag: str,
+    emp_tag: Optional[str] = None,
 ) -> List[Tuple[dt.datetime, dt.datetime]]:
-    cal = load_ics_from_bytes(ics_bytes)
+    """
+    Return merged busy blocks for a single employee, based on a shared calendar.
+
+    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY
+    contains that tag are counted as busy for this employee.
+    """
+    cal = Calendar.from_ical(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
-    for comp in cal.walk():
-        if comp.name != "VEVENT":
-            continue
 
-        summary = str(comp.get("SUMMARY", "")).upper()
-        if emp_tag.upper() not in summary:
-            continue
+    for comp in cal.walk("VEVENT"):
+        dtstart = comp.get("dtstart").dt
+        dtend = comp.get("dtend").dt
 
-        dtstart = comp.get("DTSTART").dt
-        dtend = comp.get("DTEND").dt
+        # Filter by employee tag in SUMMARY
+        if emp_tag:
+            summary = str(comp.get("summary", ""))
+            if emp_tag not in summary:
+                continue
 
-        if dtstart.tzinfo is None:
-            dtstart = dtstart.replace(tzinfo=UTC)
-        if dtend.tzinfo is None:
-            dtend = dtend.replace(tzinfo=UTC)
+        if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
+            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
+        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
+            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
 
-        if dtend <= window_start or dtstart >= window_end:
-            continue
+        s = max(window_start, dtstart)
+        e = min(window_end, dtend)
+        if e > s and (s.weekday() in working_days or e.weekday() in working_days):
+            blocks.append((s, e))
 
-        s = max(dtstart, window_start)
-        e = min(dtend, window_end)
+    blocks.sort(key=lambda x: x[0])
+    merged: List[List[dt.datetime]] = []
+    for s, e in blocks:
+        if not merged or s > merged[-1][1]:
+            merged.append([s, e])
+        else:
+            merged[-1][1] = max(merged[-1][1], e)
 
-        if s.weekday() not in working_days and e.weekday() not in working_days:
-            continue
-
-        blocks.append((s, e))
-
-    return blocks
+    return [(s, e) for s, e in merged]
 
 
 def total_work_hours(
@@ -212,13 +245,13 @@ def total_work_hours(
 
 def remaining_hours_for_employee(
     ics_bytes: bytes,
-    emp_tag: str,
+    emp_tag: Optional[str],
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
-    max_daily_hours: float,
+    max_hours_per_day: int,
 ) -> int:
-    baseline = total_work_hours(window_start, window_end, working_days, max_daily_hours)
+    baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
     if not ics_bytes:
         return baseline
 
@@ -232,7 +265,9 @@ def remaining_hours_for_employee(
     return max(0, int(round(baseline - busy_hours)))
 
 
-# ---------- Highlights builder ----------
+# ---------------------------------------------------------------------------
+# Highlights builder
+# ---------------------------------------------------------------------------
 
 def build_highlights_from_profiles(
     project_profile: Dict[str, Any],
@@ -275,7 +310,9 @@ def build_highlights_from_profiles(
     return highlights
 
 
-# ---------- PDF report ----------
+# ---------------------------------------------------------------------------
+# PDF report
+# ---------------------------------------------------------------------------
 
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
@@ -355,7 +392,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         y = h - 130
 
         c.setFont("Helvetica-Bold", 12)
-        display_name = format_employee_label(r["emp_id"])
+        display_name = r.get("display_name") or format_employee_label(r["emp_id"])
         c.drawString(72, y, f"Candidate: {display_name}")
         y -= 18
 
@@ -464,7 +501,9 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
-# ---------- Main pipeline for results page ----------
+# ---------------------------------------------------------------------------
+# Main pipeline for results page
+# ---------------------------------------------------------------------------
 
 def fetch_ics_bytes(url: str) -> bytes:
     if not url:
@@ -514,7 +553,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         if not calendars:
             return window_baseline
         cal_bytes = calendars[0]["_bytes"]
-        m = re.search(r"Employee_\d+", emp_id)
+        m = re.search(r"Employee_0*\d+", emp_id)
         emp_tag = m.group(0) if m else emp_id
         return remaining_hours_for_employee(
             cal_bytes,
@@ -530,6 +569,8 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
         text = extract_text_from_upload(up)
 
+        display_name = infer_employee_display_name(stem, text)
+
         cand_profile = build_candidate_profile(text, project_profile)
         skill_match_pct = cand_profile.get("skill_match_percent")
         if skill_match_pct is None:
@@ -544,6 +585,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         candidates.append(
             {
                 "id": stem,
+                "display_name": display_name,
                 "fname": getattr(up, "name", stem),
                 "stem": stem,
                 "profile": cand_profile,
@@ -572,6 +614,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
         results.append(
             {
                 "emp_id": c["id"],
+                "display_name": c.get("display_name", c["id"]),
                 "skillfit": round(c["skillfit"], 4),
                 "hours": int(avail),
                 "readiscore": round(readiscore, 4),
@@ -587,7 +630,9 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
     return results, project_profile, window_baseline
 
 
-# ---------- Render results (bucketed tiles) ----------
+# ---------------------------------------------------------------------------
+# Render results (bucketed tiles)
+# ---------------------------------------------------------------------------
 
 results, project_profile, window_baseline = run_results_pipeline()
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
@@ -619,7 +664,7 @@ for b in BUCKET_ORDER:
     for i, r in enumerate(group):
         col = cols[i % 4]
         with col:
-            display_name = format_employee_label(r["emp_id"])
+            display_name = r.get("display_name") or format_employee_label(r["emp_id"])
             hl = r.get("highlights", [])
             lines = []
             for h in hl:
@@ -662,7 +707,9 @@ for b in BUCKET_ORDER:
                 unsafe_allow_html=True,
             )
 
-# ---------- PDF + bottom buttons ----------
+# ---------------------------------------------------------------------------
+# PDF + bottom buttons
+# ---------------------------------------------------------------------------
 
 role_counts: Dict[str, int] = {}
 for r in results:
