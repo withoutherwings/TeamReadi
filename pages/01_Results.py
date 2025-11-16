@@ -223,8 +223,66 @@ def read_text_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calendar & availability helpers
+# Calendar & availability helpers (improved fuzzy matching)
 # ---------------------------------------------------------------------------
+
+# Very generic words we do NOT want to match on when guessing employees
+_EMP_STOPWORDS: Set[str] = {
+    "employee",
+    "resume",
+    "calendar",
+    "project",
+    "manager",
+    "engineer",
+    "coordinator",
+    "pm",
+    "cm",
+    "admin",
+    "role",
+    "visit",
+    "site",
+    "shift",
+    "work",
+    "working",
+    "meeting",
+}
+
+
+def _normalize_tokens(text: str) -> Set[str]:
+    """
+    Turn arbitrary text into a set of lowercase alphanumeric tokens,
+    dropping very common / unhelpful words.
+    """
+    text = str(text or "").lower()
+    tokens = re.split(r"[^a-z0-9]+", text)
+    return {
+        t
+        for t in tokens
+        if t and len(t) >= 2 and t not in _EMP_STOPWORDS
+    }
+
+
+def _summary_matches_tags(summary: str, tags: Optional[List[str]]) -> bool:
+    """
+    Instead of raw substring search, do token overlap between the calendar SUMMARY
+    and the tag strings derived from the resume / filename.
+    """
+    if not tags:
+        return False
+
+    summary_tokens = _normalize_tokens(summary)
+    if not summary_tokens:
+        return False
+
+    tag_tokens: Set[str] = set()
+    for t in tags:
+        tag_tokens |= _normalize_tokens(t)
+
+    if not tag_tokens:
+        return False
+
+    return bool(summary_tokens & tag_tokens)
+
 
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
@@ -236,43 +294,70 @@ def busy_blocks_from_ics_for_employee(
     """
     Return merged busy blocks for a single employee, based on a shared calendar.
 
-    - If `tags` is provided, we only count events whose SUMMARY contains
-      at least one of those tags (case-insensitive).
+    - If `tags` is provided, we count events whose SUMMARY *token set* overlaps
+      with the tokens from the tags (fuzzy match for names / IDs).
     """
-    cal = Calendar.from_ical(ics_bytes)
+    try:
+        cal = Calendar.from_ical(ics_bytes)
+    except Exception:
+        return []
+
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
 
-    tag_list = [t.lower() for t in (tags or []) if t]
-    use_tags = len(tag_list) > 0
-
     for comp in cal.walk("VEVENT"):
-        dtstart = comp.get("dtstart").dt
-        dtend = comp.get("dtend").dt
+        start_raw = comp.get("dtstart")
+        end_raw = comp.get("dtend")
 
-        if use_tags:
-            summary = str(comp.get("summary", "")).lower()
-            if not any(tag in summary for tag in tag_list):
-                continue
+        if not start_raw:
+            continue
+
+        dtstart = start_raw.dt
+        dtend = end_raw.dt if end_raw is not None else None
 
         if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
             dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
-        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
+        if dtend is None:
+            dtend = dtstart + dt.timedelta(hours=1)
+        elif isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
             dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
+
+        if not isinstance(dtstart, dt.datetime) or not isinstance(dtend, dt.datetime):
+            continue
+
+        if dtend <= dtstart:
+            continue
+
+        if tags:
+            summary = str(comp.get("summary", ""))
+            if not _summary_matches_tags(summary, tags):
+                continue
 
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
-        if e > s and (s.weekday() in working_days or e.weekday() in working_days):
-            blocks.append((s, e))
+
+        if e <= s:
+            continue
+
+        if (s.weekday() not in working_days) and (e.weekday() not in working_days):
+            continue
+
+        blocks.append((s, e))
 
     blocks.sort(key=lambda x: x[0])
-    merged: List[List[dt.datetime]] = []
-    for s, e in blocks:
-        if not merged or s > merged[-1][1]:
-            merged.append([s, e])
-        else:
-            merged[-1][1] = max(merged[-1][1], e)
+    if not blocks:
+        return []
 
-    return [(s, e) for s, e in merged]
+    merged: List[Tuple[dt.datetime, dt.datetime]] = []
+    cur_s, cur_e = blocks[0]
+    for s, e in blocks[1:]:
+        if s > cur_e:
+            merged.append((cur_s, cur_e))
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    merged.append((cur_s, cur_e))
+
+    return merged
 
 
 def total_work_hours(
@@ -298,6 +383,11 @@ def remaining_hours_for_employee(
     working_days: Set[int],
     max_hours_per_day: int,
 ) -> int:
+    """
+    Compute remaining hours:
+      baseline window hours (from user dates & max_hours)
+      minus busy hours from calendar events that fuzzily match this employee.
+    """
     baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
     if not ics_bytes:
         return baseline
@@ -782,7 +872,7 @@ for b in BUCKET_ORDER:
             )
 
 # ---------------------------------------------------------------------------
-# PDF + bottom buttons
+# PDF + bottom buttons (left-justified, working "Return to Start")
 # ---------------------------------------------------------------------------
 
 role_counts: Dict[str, int] = {}
@@ -801,9 +891,10 @@ params = {
     "role_counts": role_counts,
 }
 
-col_left, col_center, col_right = st.columns([1, 2, 1])
-with col_center:
-    pdf_data = build_pdf(results, params)
+pdf_data = build_pdf(results, params)
+
+col_dl, col_back = st.columns([1, 1])
+with col_dl:
     st.download_button(
         "Download Full PDF Report",
         data=pdf_data,
@@ -811,17 +902,8 @@ with col_center:
         mime="application/pdf",
     )
 
-    st.write("")
-
-    if st.button("Return to Start"):
-        for k in RESET_KEYS:
-            st.session_state.pop(k, None)
-        st.markdown(
-            """
-            <script>
-            window.location.href = "https://teamreadi.streamlit.app";
-            </script>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.stop()
+with col_back:
+    st.link_button(
+        "Return to Start",
+        url="https://teamreadi.streamlit.app",
+    )
