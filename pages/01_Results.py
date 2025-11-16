@@ -24,53 +24,70 @@ def format_employee_label(raw_id: str) -> str:
       'Employee_007 Resume', 'Employee_007_Resume.pdf', 'ice cream sundae.docx'
     into a clean display label:
       'Employee 007', 'Employee 007', 'ice cream sundae'
-
-    This is only for DISPLAY. The underlying employee_id key is unchanged so
-    your calendar matching still works.
     """
     if not raw_id:
         return ""
+    # Strip extension and the word 'resume'
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", raw_id).strip()
+    stem = re.sub(r"resume", "", stem, flags=re.IGNORECASE).strip()
 
-    label = str(raw_id)
-
-    # If something that looks like a path, just keep the filename
-    label = os.path.basename(label)
-
-    # Strip common extensions
-    for ext in (".pdf", ".docx", ".doc", ".txt"):
-        if label.lower().endswith(ext):
-            label = label[: -len(ext)]
-
-    # Strip a trailing "resume" word if present (case-insensitive)
-    if label.lower().endswith(" resume"):
-        label = label[: -len(" resume")]
-
-    # Replace underscores with spaces and normalize extra spaces
-    label = label.replace("_", " ")
-    label = " ".join(label.split())
-
-    return label
+    # If it looks like Employee_007, normalize to 'Employee 007'
+    m = re.match(r"(Employee)[ _-]*(\d+)", stem, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1).title()} {m.group(2)}"
+    return stem
 
 
-# ---------- Page shell ----------
-st.set_page_config(page_title="ReadiReport", layout="wide")
-st.title("ReadiReport")
+# ---------- Session / params ----------
 
-# Keys to clear when “Return to Start” is clicked
-RESET_KEYS = (
+REQUIRED_KEYS = [
     "resumes",
     "req_files",
     "req_url",
     "cal_method",
     "cal_link",
-    "cal_upload",
     "start_date",
     "end_date",
     "workdays",
     "max_hours",
     "alpha",
     "random_target",
-)
+]
+
+RESET_KEYS = list(REQUIRED_KEYS)
+
+
+def require_session_keys():
+    missing = [k for k in REQUIRED_KEYS if k not in st.session_state]
+    if missing:
+        st.error(
+            "Session data is missing. Please return to the landing page and "
+            "re-submit the form."
+        )
+        st.stop()
+
+
+require_session_keys()
+
+resumes_raw = st.session_state["resumes"]
+req_files = st.session_state["req_files"]
+req_url = st.session_state["req_url"]
+cal_method = st.session_state["cal_method"]
+cal_link = st.session_state["cal_link"]
+start_date = dt.date.fromisoformat(st.session_state["start_date"])
+end_date = dt.date.fromisoformat(st.session_state["end_date"])
+workdays_l = st.session_state["workdays"]
+max_hours = st.session_state["max_hours"]
+alpha = st.session_state["alpha"] or 0.7
+
+
+# ---------- UI shell ----------
+
+st.set_page_config(page_title="TeamReadi — Results", layout="wide")
+st.title("ReadiReport")
+
+st.caption("PM / Admin Roles")
+
 
 # ---------- Helpers: files & text ----------
 
@@ -85,75 +102,50 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def extract_text_from_docx(file_bytes: bytes) -> str:
     with io.BytesIO(file_bytes) as f:
         doc = Document(f)
-    return "\n".join(p.text for p in doc.paragraphs)
+        return "\n".join(p.text for p in doc.paragraphs)
 
 
 def extract_text_from_any(upload) -> str:
-    """
-    `upload` is a small in-memory object with .name and .read() -> bytes.
-    """
-    name = getattr(upload, "name", "file.txt").lower()
-    data = upload.read()
+    """handle PDFs, DOCX, or plain text as uploaded to Streamlit."""
+    name = upload.name.lower()
+    b = upload.getvalue()
     if name.endswith(".pdf"):
-        return extract_text_from_pdf(data)
+        return extract_text_from_pdf(b)
     if name.endswith(".docx"):
-        return extract_text_from_docx(data)
-    return data.decode(errors="ignore")
-
-
-def read_text_from_url(url: str) -> str:
-    """
-    Fetch an RFP/job webpage and extract readable text,
-    stripping scripts, styles, nav, etc.
-    """
+        return extract_text_from_docx(b)
     try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Remove non-content elements
-        for tag in soup(["script", "style", "meta", "noscript", "header", "footer", "nav", "form"]):
-            tag.decompose()
-
-        text = soup.get_text(separator="\n", strip=True)
-
-        # Trim very long pages to keep prompts sane
-        return text[:20000]
+        return b.decode("utf-8", errors="ignore")
     except Exception:
         return ""
 
 
-def filename_stem(fname: str) -> str:
-    return re.sub(r"\.[^.]+$", "", fname or "").strip()
+def read_text_from_url(url: str) -> str:
+    """Best-effort: fetch text from an RFP URL if provided."""
+    if not url:
+        return ""
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+    except Exception:
+        return ""
+    content_type = r.headers.get("Content-Type", "")
+    if "pdf" in content_type.lower():
+        return extract_text_from_pdf(r.content)
+    # Otherwise treat as HTML
+    soup = BeautifulSoup(r.text, "html.parser")
+    return soup.get_text(separator="\n")
 
 
-# ---------- Calendar math ----------
-
-def daterange_days(start: dt.datetime, end: dt.datetime):
-    d = start.date()
-    while d <= end.date():
-        yield d
-        d += dt.timedelta(days=1)
+def filename_stem(path_or_name: str) -> str:
+    base = os.path.basename(path_or_name)
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", base)
+    return stem
 
 
-def total_work_hours(
-    start: dt.datetime,
-    end: dt.datetime,
-    working_days: Set[int],
-    max_hours_per_day: int,
-) -> int:
-    total = 0
-    for d in daterange_days(start, end):
-        if d.weekday() in working_days:
-            total += max_hours_per_day
-    return total
+# ---------- Calendar & availability helpers ----------
 
-
-def fetch_ics_bytes(url: str) -> bytes:
-    r = requests.get(url, timeout=10)
-    r.raise_for_status()
-    return r.content
+def load_ics_from_bytes(b: bytes) -> Calendar:
+    return Calendar.from_ical(b)
 
 
 def busy_blocks_from_ics_for_employee(
@@ -161,62 +153,76 @@ def busy_blocks_from_ics_for_employee(
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
-    emp_tag: Optional[str] = None,
+    emp_tag: str,
 ) -> List[Tuple[dt.datetime, dt.datetime]]:
     """
-    Return merged busy blocks for a single employee, based on a shared calendar.
-
-    If emp_tag is provided (e.g. 'Employee_001'), only events whose SUMMARY contains
-    that tag are counted as busy for this employee.
+    Parse an ICS calendar and return busy intervals (start, end) in the given window
+    for the specific employee tag in SUMMARY lines, respecting working_days mask.
     """
-    cal = Calendar.from_ical(ics_bytes)
+    cal = load_ics_from_bytes(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
+    for comp in cal.walk():
+        if comp.name != "VEVENT":
+            continue
 
-    for comp in cal.walk("VEVENT"):
-        dtstart = comp.get("dtstart").dt
-        dtend = comp.get("dtend").dt
+        summary = str(comp.get("SUMMARY", "")).upper()
+        if emp_tag.upper() not in summary:
+            continue
 
-        # Filter by employee tag in the SUMMARY line, if requested
-        if emp_tag:
-            summary = str(comp.get("summary", ""))
-            if emp_tag not in summary:
-                continue
+        dtstart = comp.get("DTSTART").dt
+        dtend = comp.get("DTEND").dt
 
-        if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
-            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
-        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
-            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
+        # Normalize to timezone-aware UTC
+        if dtstart.tzinfo is None:
+            dtstart = dtstart.replace(tzinfo=UTC)
+        if dtend.tzinfo is None:
+            dtend = dtend.replace(tzinfo=UTC)
 
-        s = max(window_start, dtstart)
-        e = min(window_end, dtend)
-        if e > s and (s.weekday() in working_days or e.weekday() in working_days):
-            blocks.append((s, e))
+        # Clip to window
+        if dtend <= window_start or dtstart >= window_end:
+            continue
 
-    # merge overlaps
-    blocks.sort(key=lambda x: x[0])
-    merged: List[List[dt.datetime]] = []
-    for s, e in blocks:
-        if not merged or s > merged[-1][1]:
-            merged.append([s, e])
-        else:
-            merged[-1][1] = max(merged[-1][1], e)
+        s = max(dtstart, window_start)
+        e = min(dtend, window_end)
 
-    return [(s, e) for s, e in merged]
+        # Only count time that falls on working days
+        if s.weekday() not in working_days and e.weekday() not in working_days:
+            continue
+
+        blocks.append((s, e))
+
+    return blocks
+
+
+def total_work_hours(
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+    working_days: Set[int],
+    max_daily_hours: float,
+) -> int:
+    """
+    Compute total possible work hours in the given window, constrained by:
+    - working_days: set of weekday indices (0=Mon ... 6=Sun)
+    - max_daily_hours: cap per day
+    """
+    cur = window_start
+    total = 0.0
+    while cur < window_end:
+        if cur.weekday() in working_days:
+            total += max_daily_hours
+        cur += dt.timedelta(days=1)
+    return int(total)
 
 
 def remaining_hours_for_employee(
     ics_bytes: bytes,
-    emp_tag: Optional[str],
+    emp_tag: str,
     window_start: dt.datetime,
     window_end: dt.datetime,
     working_days: Set[int],
-    max_hours_per_day: int,
+    max_daily_hours: float,
 ) -> int:
-    """
-    Compute remaining hours for ONE employee, by filtering calendar events
-    using emp_tag (e.g. 'Employee_001').
-    """
-    baseline = total_work_hours(window_start, window_end, working_days, max_hours_per_day)
+    baseline = total_work_hours(window_start, window_end, working_days, max_daily_hours)
     if not ics_bytes:
         return baseline
 
@@ -238,9 +244,14 @@ def build_highlights_from_profiles(
     max_items: int = 5,
 ) -> List[Dict[str, Any]]:
     """
-    Build top-N requirement highlights for tiles & PDF based on:
-      project_profile["must_have_skills"]
-      candidate_profile["candidate_skills"]
+    Build top-N requirement highlights for tiles & PDF.
+
+    Prefer the explicit LLM output if available:
+      - candidate_profile["matched_must_have_skills"]
+      - candidate_profile["missing_must_have_skills"]
+
+    and fall back to simple lexical overlap with
+    candidate_profile["candidate_skills"] otherwise.
     """
     proj_must = [
         str(x).strip()
@@ -248,6 +259,35 @@ def build_highlights_from_profiles(
         if str(x).strip()
     ][:max_items]
 
+    # First choice: use matched / missing lists directly from the LLM
+    matched_raw = candidate_profile.get("matched_must_have_skills")
+    missing_raw = candidate_profile.get("missing_must_have_skills")
+    if matched_raw is not None or missing_raw is not None:
+        matched_set = {
+            str(s).strip().lower()
+            for s in (matched_raw or [])
+            if str(s).strip()
+        }
+        missing_set = {
+            str(s).strip().lower()
+            for s in (missing_raw or [])
+            if str(s).strip()
+        }
+
+        highlights: List[Dict[str, Any]] = []
+        for label in proj_must:
+            key = label.strip().lower()
+            if key in matched_set:
+                met = True
+            elif key in missing_set:
+                met = False
+            else:
+                # If unsure, treat as not yet clearly met.
+                met = False
+            highlights.append({"skill": label, "met": met})
+        return highlights
+
+    # Fallback: lexical overlap with candidate_skills list
     cand_skills = [
         str(s).strip().lower()
         for s in candidate_profile.get("candidate_skills", [])
@@ -313,7 +353,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     proj_summary = params.get("project_summary", "")
     if proj_summary:
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Project Summary")
+        c.drawString(72, y, "Project summary:")
         y -= 18
         c.setFont("Helvetica", 10)
         for line in wrap_text(proj_summary, 95):
@@ -322,30 +362,24 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                 header()
                 y = h - 130
                 c.setFont("Helvetica", 10)
-            c.drawString(80, y, line)
+            c.drawString(72, y, line)
             y -= 14
+        y -= 10
 
-    role_counts: Dict[str, int] = params.get("role_counts", {})
+    # Role mix
+    role_counts = params.get("role_counts", {})
     if role_counts:
-        if y < 110:
-            c.showPage()
-            header()
-            y = h - 130
-        y -= 4
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Recommended role mix for this project")
+        c.drawString(72, y, "Role mix by bucket:")
         y -= 18
         c.setFont("Helvetica", 10)
         for bucket, count in role_counts.items():
-            if count <= 0:
-                continue
-            line = f"• {bucket} — {count} candidate(s) matched"
             if y < 80:
                 c.showPage()
                 header()
                 y = h - 130
                 c.setFont("Helvetica", 10)
-            c.drawString(80, y, line)
+            c.drawString(80, y, f"- {bucket}: {count} candidate(s)")
             y -= 14
 
     c.showPage()
@@ -357,9 +391,9 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         header()
         y = h - 130
 
+        c.setFont("Helvetica-Bold", 12)
         display_name = format_employee_label(r["emp_id"])
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(72, y, display_name)
+        c.drawString(72, y, f"Candidate: {display_name}")
         y -= 18
 
         c.setFont("Helvetica", 10)
@@ -383,9 +417,11 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         )
         y -= 22
 
+        profile = r.get("profile") or {}
+
         # Best-aligned strengths
-        strengths = [h["skill"] for h in r.get("highlights", []) if h.get("met")]
-        gaps = [h["skill"] for h in r.get("highlights", []) if not h.get("met")]
+        strengths = profile.get("strengths") or [h["skill"] for h in r.get("highlights", []) if h.get("met")]
+        gaps = profile.get("gaps") or [h["skill"] for h in r.get("highlights", []) if not h.get("met")]
 
         c.setFont("Helvetica-Bold", 11)
         c.drawString(72, y, "Best-aligned project strengths:")
@@ -447,8 +483,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.drawString(80, y, msg)
         y -= 22
 
-        # Overall recommendation (from role inference narrative)
-        fit = (r.get("project_fit_summary") or "").strip()
+        # Overall recommendation (from candidate summary / role inference narrative)
+        fit = (profile.get("candidate_summary") or r.get("project_fit_summary") or "").strip()
         if fit:
             if y < 100:
                 c.showPage()
@@ -470,34 +506,23 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.showPage()
 
     c.save()
-    pdf_bytes = buf.getvalue()
-    buf.close()
-    return pdf_bytes
+    return buf.getvalue()
 
 
-# ---------- Orchestrator (runs automatically) ----------
+# ---------- Main pipeline for results page ----------
 
-with st.spinner("Analyzing inputs with AI and calendars…"):
-    ss = st.session_state
+def fetch_ics_bytes(url: str) -> bytes:
+    if not url:
+        return b""
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        return r.content
+    except Exception:
+        return b""
 
-    # Landing inputs
-    resumes_raw = [
-        type("Mem", (), {"name": x["name"], "read": (lambda self=None, d=x["data"]: d)})
-        for x in ss.get("resumes", [])
-    ]
-    req_files = [
-        type("Mem", (), {"name": x["name"], "read": (lambda self=None, d=x["data"]: d)})
-        for x in ss.get("req_files", [])
-    ]
-    req_url = ss.get("req_url", "")
-    cal_method = ss.get("cal_method", "Calendar link")
-    cal_link = ss.get("cal_link", "")
-    start_date = dt.date.fromisoformat(ss.get("start_date", str(dt.date.today())))
-    end_date = dt.date.fromisoformat(ss.get("end_date", str(dt.date.today())))
-    workdays_l = ss.get("workdays", ["Mon", "Tue", "Wed", "Thu", "Fri"])
-    max_hours = int(ss.get("max_hours", 8))
-    alpha = float(ss.get("alpha", 0.7))
 
+def run_results_pipeline() -> List[Dict[str, Any]]:
     # Window / masks
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
@@ -512,10 +537,6 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         job_text = read_text_from_url(req_url)
     else:
         job_text = ""
-
-    if not job_text.strip():
-        st.error("Please upload a project requirements file or paste a valid job / RFP URL.")
-        st.stop()
 
     # -------- Project profile via new pipeline helpers --------
     project_profile = build_project_profile(job_text)
@@ -570,15 +591,17 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         stem = filename_stem(up.name)
         text = extract_text_from_any(up)
 
-        # LLM-based candidate profile
+        # LLM-based candidate profile (now includes its own skill_match_percent)
         cand_profile = build_candidate_profile(text, project_profile)
 
         # Skill match (0–100) then convert to 0–1 for ReadiScore
-        skill_match_pct = compute_skill_match(
-            project_profile.get("must_have_skills", []),
-            cand_profile.get("candidate_skills", []),
-        )
-        skillfit = skill_match_pct / 100.0
+        skill_match_pct = cand_profile.get("skill_match_percent")
+        if skill_match_pct is None:
+            skill_match_pct = compute_skill_match(
+                project_profile.get("must_have_skills", []),
+                cand_profile.get("candidate_skills", []),
+            )
+        skillfit = float(skill_match_pct) / 100.0
 
         # Role inference (existing backend)
         role_info = infer_resume_role(job_text, text)
@@ -600,7 +623,8 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     # -------- Compute availability, highlights, ReadiScore --------
     results: List[Dict[str, Any]] = []
     for c in candidates:
-        avail = availability_for_employee(c["id"])
+        emp_id = c["id"]
+        avail = availability_for_employee(emp_id)
         avail_frac = avail / max(window_baseline, 1)
 
         readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
@@ -622,10 +646,16 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
                 "project_fit_summary": c["project_fit_summary"],
                 "unsuitable_reason": c["unsuitable_reason"],
                 "highlights": highlights,
+                "profile": c["profile"],
             }
         )
 
+    return results, project_profile, window_baseline
+
+
 # ---------- Render results (bucketed tiles) ----------
+
+results, project_profile, window_baseline = run_results_pipeline()
 
 # Sort by ReadiScore descending
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
@@ -633,9 +663,9 @@ results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
     "PM/Admin": "PM / Admin Roles",
-    "Support/Coordination": "Support & Coordination Roles",
+    "Support/Coordination": "Support / Coordination Roles",
     "Field/Operator": "Field / Operator Roles",
-    "Out-of-scope": "Out-of-scope / Not a fit",
+    "Out-of-scope": "Out-of-scope / Non-target Roles",
 }
 
 # Group
@@ -665,18 +695,17 @@ for b in BUCKET_ORDER:
             for h in hl:
                 icon = "✓" if h.get("met") else "✗"
                 lines.append(f"{icon} {h.get('skill','')}")
+            highlights_html = "<br>".join(lines) if lines else "No key requirements clearly met yet."
 
-            highlights_html = "<br/>".join(lines) if lines else "No key requirements clearly met yet."
-
-            col.markdown(
+            st.markdown(
                 f"""
 <div style="
-  background:#10233D;
-  color:#FFFFFF;
-  border-radius:14px;
-  padding:14px 16px;
-  margin-bottom:14px;
-  box-shadow:0 10px 28px rgba(0,0,0,.35);
+  background-color:#041E3A;
+  border-radius:18px;
+  padding:18px 20px;
+  margin-bottom:18px;
+  box-shadow:0 8px 16px rgba(0,0,0,0.25);
+  color:white;
   min-height:170px;
 ">
   <div style="font-size:1.4rem;font-weight:800;color:#FF8A1E;">
