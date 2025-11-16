@@ -1,4 +1,4 @@
-# pages/01_Results.py — ReadiReport (ranked tiles + PDF, using new pipeline helpers) 
+# pages/01_Results.py — ReadiReport (ranked tiles + PDF, using new pipeline helpers)
 
 import os, io, re, json, requests
 import datetime as dt
@@ -18,24 +18,27 @@ from backend.pipeline import (
     compute_skill_match,
 )
 
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
 def format_employee_label(raw_id: str) -> str:
     """
-    Turn things like:
-      'Employee_007 Resume', 'Employee_007_Resume.pdf', 'ice cream sundae.docx'
-    into a clean display label:
-      'Employee 007', 'Employee 007', 'ice cream sundae'
+    Make nicer labels like 'Employee 007' instead of 'Employee_007 Resume.pdf'.
     """
     if not raw_id:
         return ""
-    # Strip extension and the word 'resume'
     stem = re.sub(r"\.[A-Za-z0-9]+$", "", raw_id).strip()
     stem = re.sub(r"resume", "", stem, flags=re.IGNORECASE).strip()
-
-    # If it looks like Employee_007, normalize to 'Employee 007'
     m = re.match(r"(Employee)[ _-]*(\d+)", stem, flags=re.IGNORECASE)
     if m:
         return f"{m.group(1).title()} {m.group(2)}"
     return stem
+
+
+def filename_stem(path_or_name: str) -> str:
+    base = os.path.basename(str(path_or_name))
+    return re.sub(r"\.[A-Za-z0-9]+$", "", base)
 
 
 # ---------- Session / params ----------
@@ -80,18 +83,15 @@ workdays_l = st.session_state["workdays"]
 max_hours = st.session_state["max_hours"]
 alpha = st.session_state["alpha"] or 0.7
 
-
 # ---------- UI shell ----------
 
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
 st.title("ReadiReport")
-
 st.caption("PM / Admin Roles")
 
+# ---------- Text extraction helpers ----------
 
-# ---------- Helpers: files & text ----------
-
-def extract_text_from_pdf(file_bytes: bytes) -> str:
+def extract_text_from_pdf_bytes(file_bytes: bytes) -> str:
     text = []
     with fitz.open(stream=io.BytesIO(file_bytes), filetype="pdf") as doc:
         for page in doc:
@@ -99,28 +99,42 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     return "\n".join(text)
 
 
-def extract_text_from_docx(file_bytes: bytes) -> str:
+def extract_text_from_docx_bytes(file_bytes: bytes) -> str:
     with io.BytesIO(file_bytes) as f:
         doc = Document(f)
         return "\n".join(p.text for p in doc.paragraphs)
 
 
-def extract_text_from_any(upload) -> str:
-    """handle PDFs, DOCX, or plain text as uploaded to Streamlit."""
-    name = upload.name.lower()
-    b = upload.getvalue()
+def extract_text_from_upload(obj) -> str:
+    """
+    Handle both Streamlit UploadedFile and saved dicts like {"name": ..., "data": ...}.
+    """
+    if hasattr(obj, "name"):
+        name = obj.name.lower()
+        data = obj.getvalue()
+    elif isinstance(obj, dict):
+        name = str(obj.get("name", "")).lower()
+        data = obj.get("data") or obj.get("bytes") or b""
+    else:
+        return ""
+
+    if not isinstance(data, (bytes, bytearray)):
+        try:
+            data = bytes(data)
+        except Exception:
+            return ""
+
     if name.endswith(".pdf"):
-        return extract_text_from_pdf(b)
+        return extract_text_from_pdf_bytes(data)
     if name.endswith(".docx"):
-        return extract_text_from_docx(b)
+        return extract_text_from_docx_bytes(data)
     try:
-        return b.decode("utf-8", errors="ignore")
+        return data.decode("utf-8", errors="ignore")
     except Exception:
         return ""
 
 
 def read_text_from_url(url: str) -> str:
-    """Best-effort: fetch text from an RFP URL if provided."""
     if not url:
         return ""
     try:
@@ -130,16 +144,10 @@ def read_text_from_url(url: str) -> str:
         return ""
     content_type = r.headers.get("Content-Type", "")
     if "pdf" in content_type.lower():
-        return extract_text_from_pdf(r.content)
-    # Otherwise treat as HTML
+        return extract_text_from_pdf_bytes(r.content)
+    # treat as HTML
     soup = BeautifulSoup(r.text, "html.parser")
     return soup.get_text(separator="\n")
-
-
-def filename_stem(path_or_name: str) -> str:
-    base = os.path.basename(path_or_name)
-    stem = re.sub(r"\.[A-Za-z0-9]+$", "", base)
-    return stem
 
 
 # ---------- Calendar & availability helpers ----------
@@ -155,10 +163,6 @@ def busy_blocks_from_ics_for_employee(
     working_days: Set[int],
     emp_tag: str,
 ) -> List[Tuple[dt.datetime, dt.datetime]]:
-    """
-    Parse an ICS calendar and return busy intervals (start, end) in the given window
-    for the specific employee tag in SUMMARY lines, respecting working_days mask.
-    """
     cal = load_ics_from_bytes(ics_bytes)
     blocks: List[Tuple[dt.datetime, dt.datetime]] = []
     for comp in cal.walk():
@@ -172,20 +176,17 @@ def busy_blocks_from_ics_for_employee(
         dtstart = comp.get("DTSTART").dt
         dtend = comp.get("DTEND").dt
 
-        # Normalize to timezone-aware UTC
         if dtstart.tzinfo is None:
             dtstart = dtstart.replace(tzinfo=UTC)
         if dtend.tzinfo is None:
             dtend = dtend.replace(tzinfo=UTC)
 
-        # Clip to window
         if dtend <= window_start or dtstart >= window_end:
             continue
 
         s = max(dtstart, window_start)
         e = min(dtend, window_end)
 
-        # Only count time that falls on working days
         if s.weekday() not in working_days and e.weekday() not in working_days:
             continue
 
@@ -200,11 +201,6 @@ def total_work_hours(
     working_days: Set[int],
     max_daily_hours: float,
 ) -> int:
-    """
-    Compute total possible work hours in the given window, constrained by:
-    - working_days: set of weekday indices (0=Mon ... 6=Sun)
-    - max_daily_hours: cap per day
-    """
     cur = window_start
     total = 0.0
     while cur < window_end:
@@ -236,87 +232,56 @@ def remaining_hours_for_employee(
     return max(0, int(round(baseline - busy_hours)))
 
 
-# ---------- Highlights from project + candidate profiles ----------
+# ---------- Highlights builder ----------
 
 def build_highlights_from_profiles(
     project_profile: Dict[str, Any],
     candidate_profile: Dict[str, Any],
     max_items: int = 5,
 ) -> List[Dict[str, Any]]:
-    """
-    Build top-N requirement highlights for tiles & PDF.
-
-    Prefer the explicit LLM output if available:
-      - candidate_profile["matched_must_have_skills"]
-      - candidate_profile["missing_must_have_skills"]
-
-    and fall back to simple lexical overlap with
-    candidate_profile["candidate_skills"] otherwise.
-    """
     proj_must = [
         str(x).strip()
         for x in project_profile.get("must_have_skills", [])
         if str(x).strip()
     ][:max_items]
 
-    # First choice: use matched / missing lists directly from the LLM
     matched_raw = candidate_profile.get("matched_must_have_skills")
     missing_raw = candidate_profile.get("missing_must_have_skills")
     if matched_raw is not None or missing_raw is not None:
-        matched_set = {
-            str(s).strip().lower()
-            for s in (matched_raw or [])
-            if str(s).strip()
-        }
-        missing_set = {
-            str(s).strip().lower()
-            for s in (missing_raw or [])
-            if str(s).strip()
-        }
-
+        matched_set = {str(s).strip().lower() for s in (matched_raw or []) if str(s).strip()}
+        missing_set = {str(s).strip().lower() for s in (missing_raw or []) if str(s).strip()}
         highlights: List[Dict[str, Any]] = []
         for label in proj_must:
-            key = label.strip().lower()
+            key = label.lower()
             if key in matched_set:
                 met = True
             elif key in missing_set:
                 met = False
             else:
-                # If unsure, treat as not yet clearly met.
                 met = False
             highlights.append({"skill": label, "met": met})
         return highlights
 
-    # Fallback: lexical overlap with candidate_skills list
     cand_skills = [
         str(s).strip().lower()
         for s in candidate_profile.get("candidate_skills", [])
         if str(s).strip()
     ]
     cand_set = set(cand_skills)
-
     highlights: List[Dict[str, Any]] = []
     for label in proj_must:
-        lbl_lower = label.lower()
-        met = lbl_lower in cand_set
+        met = label.lower() in cand_set
         highlights.append({"skill": label, "met": met})
-
     return highlights
 
 
 # ---------- PDF report ----------
 
 from reportlab.lib.pagesizes import LETTER
-from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
 
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
-    """
-    Build a multi-page PDF:
-      - Page 1: project summary + role mix
-      - Subsequent pages: one page per candidate with narrative
-    """
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     w, h = LETTER
@@ -346,7 +311,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             lines.append(" ".join(line))
         return lines
 
-    # ----- Page 1: project summary + role mix -----
+    # Page 1: project summary + role mix
     header()
     y = h - 130
 
@@ -366,7 +331,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             y -= 14
         y -= 10
 
-    # Role mix
     role_counts = params.get("role_counts", {})
     if role_counts:
         c.setFont("Helvetica-Bold", 12)
@@ -384,7 +348,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
     c.showPage()
 
-    # ----- Per-candidate pages -----
     window_baseline = params.get("window_baseline", 1) or 1
 
     for idx, r in enumerate(results, start=1):
@@ -397,11 +360,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         y -= 18
 
         c.setFont("Helvetica", 10)
-        c.drawString(
-            72,
-            y,
-            f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})",
-        )
+        c.drawString(72, y, f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})")
         y -= 14
         c.drawString(
             72,
@@ -419,7 +378,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         profile = r.get("profile") or {}
 
-        # Best-aligned strengths
         strengths = profile.get("strengths") or [h["skill"] for h in r.get("highlights", []) if h.get("met")]
         gaps = profile.get("gaps") or [h["skill"] for h in r.get("highlights", []) if not h.get("met")]
 
@@ -440,7 +398,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             c.drawString(80, y, "• No key project requirements clearly met yet.")
             y -= 14
 
-        # Gaps / risks
         y -= 8
         if y < 80:
             c.showPage()
@@ -463,7 +420,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             c.drawString(80, y, "• No major gaps identified against extracted must-have skills.")
             y -= 14
 
-        # Availability impact
         y -= 8
         if y < 80:
             c.showPage()
@@ -483,7 +439,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.drawString(80, y, msg)
         y -= 22
 
-        # Overall recommendation (from candidate summary / role inference narrative)
         fit = (profile.get("candidate_summary") or r.get("project_fit_summary") or "").strip()
         if fit:
             if y < 100:
@@ -522,31 +477,28 @@ def fetch_ics_bytes(url: str) -> bytes:
         return b""
 
 
-def run_results_pipeline() -> List[Dict[str, Any]]:
-    # Window / masks
+def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
+
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
-    # Build job text: prefer uploaded files; otherwise use URL
+    # Project text from uploaded files or URL
     if req_files:
-        job_parts = [extract_text_from_any(f) for f in req_files]
-        job_text = "\n\n".join(p for p in job_parts if p)
+        parts = [extract_text_from_upload(f) for f in req_files]
+        job_text = "\n\n".join(p for p in parts if p)
     elif req_url:
         job_text = read_text_from_url(req_url)
     else:
         job_text = ""
 
-    # -------- Project profile via new pipeline helpers --------
     project_profile = build_project_profile(job_text)
-    # project_profile keys: project_summary, must_have_skills, nice_to_have_skills
 
-    # -------- Calendar(s) --------
     calendars = []
     if cal_method == "Calendar link" and cal_link:
-        try:
-            b = fetch_ics_bytes(cal_link)
+        b = fetch_ics_bytes(cal_link)
+        if b:
             calendars.append(
                 {
                     "id": filename_stem(cal_link) or "calendar_link",
@@ -555,27 +507,15 @@ def run_results_pipeline() -> List[Dict[str, Any]]:
                     "_bytes": b,
                 }
             )
-        except Exception:
-            # If calendar fails, fall back to full-availability window
-            calendars = []
 
-    # If no calendars, availability = baseline (full work window)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
     def availability_for_employee(emp_id: str) -> int:
-        """
-        Compute remaining hours for this employee ID using the shared calendar,
-        if one is provided. Assumes calendar events are tagged with something
-        like 'Employee_001' in the SUMMARY line.
-        """
         if not calendars:
             return window_baseline
-
-        cal_bytes = calendars[0]["_bytes"]  # single shared calendar
-
+        cal_bytes = calendars[0]["_bytes"]
         m = re.search(r"Employee_\d+", emp_id)
         emp_tag = m.group(0) if m else emp_id
-
         return remaining_hours_for_employee(
             cal_bytes,
             emp_tag,
@@ -585,16 +525,12 @@ def run_results_pipeline() -> List[Dict[str, Any]]:
             max_hours,
         )
 
-    # -------- Build candidates using new candidate profile helper --------
     candidates: List[Dict[str, Any]] = []
     for up in resumes_raw:
-        stem = filename_stem(up.name)
-        text = extract_text_from_any(up)
+        stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
+        text = extract_text_from_upload(up)
 
-        # LLM-based candidate profile (now includes its own skill_match_percent)
         cand_profile = build_candidate_profile(text, project_profile)
-
-        # Skill match (0–100) then convert to 0–1 for ReadiScore
         skill_match_pct = cand_profile.get("skill_match_percent")
         if skill_match_pct is None:
             skill_match_pct = compute_skill_match(
@@ -603,13 +539,12 @@ def run_results_pipeline() -> List[Dict[str, Any]]:
             )
         skillfit = float(skill_match_pct) / 100.0
 
-        # Role inference (existing backend)
         role_info = infer_resume_role(job_text, text)
 
         candidates.append(
             {
                 "id": stem,
-                "fname": up.name,
+                "fname": getattr(up, "name", stem),
                 "stem": stem,
                 "profile": cand_profile,
                 "role_bucket": role_info.get("bucket", "Out-of-scope"),
@@ -620,7 +555,6 @@ def run_results_pipeline() -> List[Dict[str, Any]]:
             }
         )
 
-    # -------- Compute availability, highlights, ReadiScore --------
     results: List[Dict[str, Any]] = []
     for c in candidates:
         emp_id = c["id"]
@@ -656,8 +590,6 @@ def run_results_pipeline() -> List[Dict[str, Any]]:
 # ---------- Render results (bucketed tiles) ----------
 
 results, project_profile, window_baseline = run_results_pipeline()
-
-# Sort by ReadiScore descending
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
@@ -668,7 +600,6 @@ bucket_labels = {
     "Out-of-scope": "Out-of-scope / Non-target Roles",
 }
 
-# Group
 grouped: Dict[str, List[Dict[str, Any]]] = {b: [] for b in BUCKET_ORDER}
 for r in results:
     b = r.get("role_bucket", "Out-of-scope")
@@ -677,15 +608,14 @@ for r in results:
     else:
         grouped[b].append(r)
 
-# Tiles by bucket
 for b in BUCKET_ORDER:
     group = grouped[b]
     if not group:
         continue
 
     st.subheader(bucket_labels[b])
-
     cols = st.columns(4)
+
     for i, r in enumerate(group):
         col = cols[i % 4]
         with col:
@@ -734,7 +664,6 @@ for b in BUCKET_ORDER:
 
 # ---------- PDF + bottom buttons ----------
 
-# Role mix for PDF
 role_counts: Dict[str, int] = {}
 for r in results:
     bucket = r.get("role_bucket", "Out-of-scope")
@@ -745,16 +674,7 @@ params = {
     "end_date": str(st.session_state.get("end_date")),
     "workdays": st.session_state.get("workdays", ["Mon", "Tue", "Wed", "Thu", "Fri"]),
     "max_hours": st.session_state.get("max_hours", 8),
-    "window_baseline": total_work_hours(
-        dt.datetime.combine(
-            dt.date.fromisoformat(st.session_state.get("start_date")), dt.time(8, 0)
-        ).replace(tzinfo=UTC),
-        dt.datetime.combine(
-            dt.date.fromisoformat(st.session_state.get("end_date")), dt.time(17, 0)
-        ).replace(tzinfo=UTC),
-        {0, 1, 2, 3, 4},  # approximate for the caption; detailed mask already in results
-        st.session_state.get("max_hours", 8),
-    ),
+    "window_baseline": window_baseline,
     "project_summary": project_profile.get("project_summary", ""),
     "role_counts": role_counts,
 }
