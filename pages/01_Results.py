@@ -18,6 +18,40 @@ from backend.pipeline import (
     compute_skill_match,
 )
 
+def format_employee_label(raw_id: str) -> str:
+    """
+    Turn things like:
+      'Employee_007 Resume', 'Employee_007_Resume.pdf', 'ice cream sundae.docx'
+    into a clean display label:
+      'Employee 007', 'Employee 007', 'ice cream sundae'
+
+    This is only for DISPLAY. The underlying employee_id key is unchanged so
+    your calendar matching still works.
+    """
+    if not raw_id:
+        return ""
+
+    label = str(raw_id)
+
+    # If something that looks like a path, just keep the filename
+    label = os.path.basename(label)
+
+    # Strip common extensions
+    for ext in (".pdf", ".docx", ".doc", ".txt"):
+        if label.lower().endswith(ext):
+            label = label[: -len(ext)]
+
+    # Strip a trailing "resume" word if present (case-insensitive)
+    if label.lower().endswith(" resume"):
+        label = label[: -len(" resume")]
+
+    # Replace underscores with spaces and normalize extra spaces
+    label = label.replace("_", " ")
+    label = " ".join(label.split())
+
+    return label
+
+
 # ---------- Page shell ----------
 st.set_page_config(page_title="ReadiReport", layout="wide")
 st.title("ReadiReport")
