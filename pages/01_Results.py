@@ -64,22 +64,15 @@ def infer_employee_display_name(stem: str, resume_text: str) -> str:
 
     return format_employee_label(stem)
 
+
 def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
     """
     Build a *minimal* set of tags for matching this candidate to calendar events.
 
     Goal: avoid generic words like 'employee' or random resume words
     so different employees don't all match the same events.
-
-    Examples:
-      display_name='Employee 010', stem='Employee_010 Resume.pdf'
-      -> ['employee 010', 'employee_010', '010']
-
-      display_name='Jane Smith'
-      -> ['jane smith']   (NOT 'jane', 'smith' separately)
     """
     tags: Set[str] = set()
-
     source = f"{display_name} {stem}"
 
     # 1) Strong pattern: Employee + number (your typical case)
@@ -100,8 +93,6 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
         tags.add(dn)
 
     return sorted(tags)
-
-
 
 
 def infer_project_name_from_inputs(
@@ -189,10 +180,7 @@ max_hours = st.session_state["max_hours"]
 alpha = st.session_state["alpha"] or 0.7
 
 # ---------- UI shell ----------
-
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
-st.title("ReadiReport")
-st.caption("PM / Admin Roles")
 
 # ---------------------------------------------------------------------------
 # Text extraction helpers
@@ -259,6 +247,7 @@ def read_text_from_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Calendar & availability helpers
 # ---------------------------------------------------------------------------
+
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
     window_start: dt.datetime,
@@ -309,8 +298,6 @@ def busy_blocks_from_ics_for_employee(
     return merged
 
 
-
-
 def total_work_hours(
     window_start: dt.datetime,
     window_end: dt.datetime,
@@ -359,13 +346,6 @@ def build_highlights_from_profiles(
 ) -> List[Dict[str, Any]]:
     """
     Build a small list of highlights for the tiles.
-
-    Priority:
-    1) If the LLM provided matched_must_have_skills / missing_must_have_skills,
-       use those directly – this avoids wording drift between the RFP list and
-       the evaluation.
-    2) Otherwise, fall back to simple overlap between project must-haves and
-       candidate_skills.
     """
     matched_raw = candidate_profile.get("matched_must_have_skills")
     missing_raw = candidate_profile.get("missing_must_have_skills")
@@ -409,7 +389,7 @@ def build_highlights_from_profiles(
 
 
 # ---------------------------------------------------------------------------
-# PDF report
+# PDF report (reverted to clean v16-style layout + project name byline)
 # ---------------------------------------------------------------------------
 
 from reportlab.lib.pagesizes import LETTER
@@ -421,32 +401,23 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     c = canvas.Canvas(buf, pagesize=LETTER)
     w, h = LETTER
 
+    project_name = params.get("project_name") or ""
+
     def header():
+        # Title with optional project byline
+        title = "ReadiReport"
+        if project_name:
+            title = f"ReadiReport: {project_name}"
+
         c.setFont("Helvetica-Bold", 18)
-        c.drawString(72, h - 72, "ReadiReport")
+        c.drawString(72, h - 72, title)
 
         c.setFont("Helvetica", 10)
         y0 = h - 90
-
-        project_name = params.get("project_name") or ""
-        if project_name:
-            c.drawString(72, y0, f"Project: {project_name}")
-            y0 -= 14
-
-        project_location = params.get("project_location") or ""
-        if project_location:
-            c.drawString(72, y0, f"Location: {project_location}")
-            y0 -= 14
-
-        project_window = params.get("project_window") or ""
-        if project_window:
-            c.drawString(72, y0, f"RFP project window: {project_window}")
-            y0 -= 14
-
         c.drawString(
             72,
             y0,
-            f"Calendar window: {params.get('start_date')} to {params.get('end_date')}",
+            f"Window: {params.get('start_date')} to {params.get('end_date')}",
         )
         y0 -= 14
         c.drawString(
@@ -469,11 +440,11 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             lines.append(" ".join(line))
         return lines
 
-    # Page 1: project summary + role mix + overview tiles
+    # ---- Page 1: project summary + role mix (v16 style) ----
     header()
     y = h - 130
 
-    proj_summary = params.get("project_summary", "")
+    proj_summary = (params.get("project_summary") or "").strip()
     if proj_summary:
         c.setFont("Helvetica-Bold", 12)
         c.drawString(72, y, "Project summary:")
@@ -482,10 +453,10 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         paragraphs = [p.strip() for p in proj_summary.split("\n\n") if p.strip()]
         if not paragraphs:
-            paragraphs = [proj_summary.strip()]
+            paragraphs = [proj_summary]
 
         for p in paragraphs:
-            for line in wrap_text(p, 95):
+            for line in wrap_text(p, 92):
                 if y < 80:
                     c.showPage()
                     header()
@@ -497,36 +468,17 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         y -= 10
 
-    # Company-level requirements (SDVOSB, FAR, etc.) – project-level only
-    company_reqs = params.get("company_requirements") or []
-    if company_reqs:
-        if y < 100:
-            c.showPage()
-            header()
-            y = h - 130
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(72, y, "Company-level requirements / certifications:")
-        y -= 16
-        c.setFont("Helvetica", 10)
-        for req in company_reqs:
-            for line in wrap_text(f"• {req}", 95):
-                if y < 80:
-                    c.showPage()
-                    header()
-                    y = h - 130
-                    c.setFont("Helvetica", 10)
-                c.drawString(72, y, line)
-                y -= 14
-        y -= 8
-
     role_mix = params.get("role_mix") or {}
     if not isinstance(role_mix, dict):
         role_mix = {}
-
     if not role_mix:
         role_mix = params.get("role_counts", {})
 
     if role_mix:
+        if y < 100:
+            c.showPage()
+            header()
+            y = h - 130
         c.setFont("Helvetica-Bold", 12)
         c.drawString(72, y, "Role mix suggested by RFP:")
         y -= 18
@@ -539,43 +491,12 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                 c.setFont("Helvetica", 10)
             c.drawString(80, y, f"- {bucket}: {count} role(s)")
             y -= 14
-        y -= 10
-
-    # Candidate snapshot: printable overview of tiles
-    if results:
-        if y < 120:
-            c.showPage()
-            header()
-            y = h - 130
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Candidate snapshot:")
-        y -= 18
-        c.setFont("Helvetica", 10)
-
-        for r in results:
-            display_name = r.get("display_name") or r.get("emp_id", "")
-            line = (
-                f"{display_name} — "
-                f"ReadiScore {int(r['readiscore'] * 100)}%, "
-                f"Skill match {int(r['skillfit'] * 100)}%, "
-                f"Available {r['hours']} hrs, "
-                f"Ideal fit: {r.get('role_title', '')}"
-            )
-            for ln in wrap_text(line, 95):
-                if y < 80:
-                    c.showPage()
-                    header()
-                    y = h - 130
-                    c.setFont("Helvetica", 10)
-                c.drawString(80, y, ln)
-                y -= 14
-            y -= 4
 
     c.showPage()
 
+    # ---- Detailed per-candidate pages ----
     window_baseline = params.get("window_baseline", 1) or 1
 
-    # Detailed per-candidate pages
     for idx, r in enumerate(results, start=1):
         header()
         y = h - 130
@@ -611,6 +532,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             h["skill"] for h in r.get("highlights", []) if not h.get("met")
         ]
 
+        # Strengths
         c.setFont("Helvetica-Bold", 11)
         c.drawString(72, y, "Best-aligned project strengths:")
         y -= 16
@@ -633,6 +555,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             c.showPage()
             header()
             y = h - 130
+
+        # Gaps
         c.setFont("Helvetica-Bold", 11)
         c.drawString(72, y, "Gaps / risks vs must-have skills:")
         y -= 16
@@ -647,7 +571,11 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
                 c.drawString(80, y, f"• {g_}")
                 y -= 14
         else:
-            c.drawString(80, y, "• No major gaps identified against extracted must-have skills.")
+            c.drawString(
+                80,
+                y,
+                "• No major gaps identified against extracted must-have skills.",
+            )
             y -= 14
 
         y -= 8
@@ -655,6 +583,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             c.showPage()
             header()
             y = h - 130
+
+        # Availability impact
         c.setFont("Helvetica-Bold", 11)
         c.drawString(72, y, "Availability impact:")
         y -= 16
@@ -663,12 +593,19 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         if avail_ratio >= 0.75:
             msg = "• High availability; candidate can likely take on a full lead role."
         elif avail_ratio >= 0.45:
-            msg = "• Moderate availability; may need to balance this assignment with existing workload."
+            msg = (
+                "• Moderate availability; may need to balance this assignment "
+                "with existing workload."
+            )
         else:
-            msg = "• Limited availability; may only be suitable for partial support on this project."
+            msg = (
+                "• Limited availability; may only be suitable for partial "
+                "support on this project."
+            )
         c.drawString(80, y, msg)
         y -= 22
 
+        # Overall recommendation
         fit = (profile.get("candidate_summary") or r.get("project_fit_summary") or "").strip()
         if fit:
             if y < 100:
@@ -679,7 +616,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             c.drawString(72, y, "Overall recommendation:")
             y -= 16
             c.setFont("Helvetica", 10)
-            for line in wrap_text(fit, 95):
+            for line in wrap_text(fit, 92):
                 if y < 80:
                     c.showPage()
                     header()
@@ -708,15 +645,14 @@ def fetch_ics_bytes(url: str) -> bytes:
     except Exception:
         return b""
 
+
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
-    # ----- Set up calendar window -----
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
 
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
-    # ----- Build project text from RFP files / URL -----
     if req_files:
         parts = [extract_text_from_upload(f) for f in req_files]
         job_text = "\n\n".join(p for p in parts if p)
@@ -725,13 +661,9 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     else:
         job_text = ""
 
-    # LLM-driven project profile (scope, skills, company requirements, etc.)
     project_profile = build_project_profile(job_text)
-
-    # Heuristic project name based on filename / URL / first "project" line
     project_name = infer_project_name_from_inputs(req_files, req_url, job_text)
 
-    # ----- Calendar setup (currently one shared calendar link) -----
     calendars = []
     if cal_method == "Calendar link" and cal_link:
         b = fetch_ics_bytes(cal_link)
@@ -748,11 +680,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
     def availability_for_employee(tags: List[str]) -> int:
-        """
-        Compute remaining hours for one employee, based on the shared calendar
-        and their tag list (usually things like 'employee 007', 'employee_007').
-        If no calendar is configured, everyone gets the full baseline.
-        """
         if not calendars:
             return window_baseline
         cal_bytes = calendars[0]["_bytes"]
@@ -765,47 +692,23 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             max_hours,
         )
 
-    # ----- Build candidate list from uploaded resumes -----
     candidates: List[Dict[str, Any]] = []
-
     for up in resumes_raw:
-        # Normalised ID from filename
         stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
         text = extract_text_from_upload(up)
 
-        # Display name like "Employee 007"
         display_name = infer_employee_display_name(stem, text)
-
-        # Calendar tags for this person
         calendar_tags = build_employee_calendar_tags(display_name, stem)
 
-        # LLM candidate profile (skills, matched/missing, narrative summary, etc.)
         cand_profile = build_candidate_profile(text, project_profile)
-
-        # ---------- NEW: compute skill match from matched/missing lists ----------
-        matched = cand_profile.get("matched_must_have_skills")
-        missing = cand_profile.get("missing_must_have_skills")
-
-        if isinstance(matched, list) or isinstance(missing, list):
-            matched_clean = [str(s).strip() for s in (matched or []) if str(s).strip()]
-            missing_clean = [str(s).strip() for s in (missing or []) if str(s).strip()]
-            total = len(matched_clean) + len(missing_clean)
-            if total > 0:
-                skill_match_pct = (len(matched_clean) / total) * 100.0
-            else:
-                skill_match_pct = 0.0
-        else:
-            # Fallback to whatever the LLM gave us, or a simple overlap score
-            skill_match_pct = cand_profile.get("skill_match_percent")
-            if skill_match_pct is None:
-                skill_match_pct = compute_skill_match(
-                    project_profile.get("must_have_skills", []),
-                    cand_profile.get("candidate_skills", []),
-                )
-
+        skill_match_pct = cand_profile.get("skill_match_percent")
+        if skill_match_pct is None:
+            skill_match_pct = compute_skill_match(
+                project_profile.get("must_have_skills", []),
+                cand_profile.get("candidate_skills", []),
+            )
         skillfit = float(skill_match_pct) / 100.0
 
-        # Role bucket / narrative from roles_backend
         role_info = infer_resume_role(job_text, text)
 
         candidates.append(
@@ -824,17 +727,13 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             }
         )
 
-    # ----- Combine skills + availability into final scores -----
     results: List[Dict[str, Any]] = []
-
     for c in candidates:
         avail = availability_for_employee(c.get("calendar_tags", []))
         avail_frac = avail / max(window_baseline, 1)
 
-        # ReadiScore: weighted 70/30 (skills vs availability)
         readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
 
-        # Tile highlights (✓ / ✗ lists)
         highlights = build_highlights_from_profiles(
             project_profile,
             c["profile"],
@@ -860,8 +759,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     return results, project_profile, window_baseline, project_name
 
 
-
-
 # ---------------------------------------------------------------------------
 # Render results (bucketed tiles)
 # ---------------------------------------------------------------------------
@@ -869,8 +766,13 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
 with st.spinner("Analyzing documents and pulling calendar availability..."):
     results, project_profile, window_baseline, project_name = run_results_pipeline()
 
-results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
+# Dynamic title *after* we know the project name
+title_text = "ReadiReport"
+if project_name:
+    title_text = f"ReadiReport: {project_name}"
+st.title(title_text)
 
+results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
