@@ -150,9 +150,27 @@ RFP TEXT:
     if not isinstance(data, dict):
         data = {}
 
-    project_summary = (data.get("project_summary") or "").strip()
-    must_have = [str(s).strip() for s in (data.get("must_have_skills") or []) if str(s).strip()]
-    nice_to_have = [str(s).strip() for s in (data.get("nice_to_have_skills") or []) if str(s).strip()]
+    # --- project_summary: coerce list -> string safely ---
+    raw_summary = data.get("project_summary", "")
+    if isinstance(raw_summary, list):
+        raw_summary = "\n\n".join(
+            str(p).strip() for p in raw_summary if str(p).strip()
+        )
+    project_summary = str(raw_summary or "").strip()
+
+    # --- must_have_skills: ensure list of strings ---
+    raw_must = data.get("must_have_skills") or []
+    if isinstance(raw_must, str):
+        raw_must = [raw_must]
+    must_have = [str(s).strip() for s in raw_must if str(s).strip()]
+
+    # --- nice_to_have_skills: ensure list of strings ---
+    raw_nice = data.get("nice_to_have_skills") or []
+    if isinstance(raw_nice, str):
+        raw_nice = [raw_nice]
+    nice_to_have = [str(s).strip() for s in raw_nice if str(s).strip()]
+
+    # --- role mix: make sure it’s a dict ---
     role_mix = data.get("role_mix_by_bucket") or {}
     if not isinstance(role_mix, dict):
         role_mix = {}
