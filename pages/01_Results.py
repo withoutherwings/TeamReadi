@@ -1,4 +1,4 @@
-# pages/01_Results.py — ReadiReport (ranked tiles + PDF)
+# pages/01_Results.py — ReadiReport (ranked tiles + PDF, using new pipeline helpers)
 
 import os, io, re, json, requests
 import datetime as dt
@@ -12,6 +12,11 @@ from dateutil.tz import UTC
 from bs4 import BeautifulSoup
 
 from backend.roles_backend import infer_resume_role
+from backend.pipeline import (
+    build_project_profile,
+    build_candidate_profile,
+    compute_skill_match,
+)
 
 # ---------- Page shell ----------
 st.set_page_config(page_title="ReadiReport", layout="wide")
@@ -50,6 +55,9 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 
 
 def extract_text_from_any(upload) -> str:
+    """
+    `upload` is a small in-memory object with .name and .read() -> bytes.
+    """
     name = getattr(upload, "name", "file.txt").lower()
     data = upload.read()
     if name.endswith(".pdf"):
@@ -80,7 +88,6 @@ def read_text_from_url(url: str) -> str:
         return text[:20000]
     except Exception:
         return ""
-
 
 
 def filename_stem(fname: str) -> str:
@@ -189,259 +196,35 @@ def remaining_hours_for_employee(
     return max(0, int(round(baseline - busy_hours)))
 
 
-# ---------- LLM + embeddings ----------
+# ---------- Highlights from project + candidate profiles ----------
 
-def get_openai():
-    from openai import OpenAI
-    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    return OpenAI(api_key=api_key) if api_key else None
-
-
-def embed_text(client, text: str) -> List[float]:
-    if not client:
-        return []
-    e = client.embeddings.create(
-        model=st.secrets.get("EMBED_MODEL", "text-embedding-3-large"),
-        input=(text or "")[:8000],
-    )
-    return e.data[0].embedding
-
-
-def cosine(a: List[float], b: List[float]) -> float:
-    if not a or not b:
-        return 0.0
-    import math
-
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return (dot / (na * nb)) if na and nb else 0.0
-
-
-# ---------- Job & profile extraction ----------
-
-def llm_extract_job(client, job_text: str) -> Dict[str, Any]:
+def build_highlights_from_profiles(
+    project_profile: Dict[str, Any],
+    candidate_profile: Dict[str, Any],
+    max_items: int = 5,
+) -> List[Dict[str, Any]]:
     """
-    Use the LLM to summarize the project / RFP into a structured spec.
-    If JSON parsing fails or the call errors, fall back to a simple heuristic.
+    Build top-N requirement highlights for tiles & PDF based on:
+      project_profile["must_have_skills"]
+      candidate_profile["candidate_skills"]
     """
-    # Fallback if no client or no text
-    if not client or not (job_text or "").strip():
-        words = sorted(set(re.findall(r"[A-Za-z]{4,}", (job_text or "").lower())))[:10]
-        return {
-            "title": "",
-            "summary": job_text[:800],
-            "must_have_skills": [f"Experience with {w}" for w in words],
-            "nice_to_have_skills": [],
-            "certifications_required": [],
-            "years_experience_min": 0,
-            "location": "",
-            "other_hard_requirements": [],
-        }
+    proj_must = [
+        str(x).strip()
+        for x in project_profile.get("must_have_skills", [])
+        if str(x).strip()
+    ][:max_items]
 
-    prompt = f"""
-You are helping a construction firm understand an RFP or job posting.
-
-Read the following project description and return JSON with these keys:
-- title: short project or role title
-- summary: 3–6 sentence summary of what is being requested
-- must_have_skills: list of the 5–12 most critical skills, licenses, or experience
-- nice_to_have_skills: list of bonus / preferred skills
-- certifications_required: list of required certifications or licenses (OSHA, PE, PMP, etc.)
-- years_experience_min: integer years of minimum required experience (0 if not specified)
-- location: short location string if it is clearly mentioned
-- other_hard_requirements: list of any other hard constraints (shift work, travel %, clearance, etc.)
-
-Project text:
-\"\"\"{job_text}\"\"\"
-
-Respond ONLY with a single JSON object and no extra commentary.
-"""
-
-    try:
-        resp = client.responses.create(
-            model=st.secrets.get("MODEL_NAME", "gpt-4.1-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You extract staffing requirements and summaries from "
-                        "construction RFPs. Always respond with valid JSON."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_output_tokens=900,
-            temperature=0,
-        )
-        raw = resp.output[0].content[0].text or ""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            raise
-
-        return {
-            "title": data.get("title", ""),
-            "summary": data.get("summary", job_text[:800]),
-            "must_have_skills": data.get("must_have_skills", []),
-            "nice_to_have_skills": data.get("nice_to_have_skills", []),
-            "certifications_required": data.get("certifications_required", []),
-            "years_experience_min": int(data.get("years_experience_min", 0) or 0),
-            "location": data.get("location", ""),
-            "other_hard_requirements": data.get("other_hard_requirements", []),
-        }
-
-    except Exception:
-        # Graceful fallback: simple keyword-based pseudo-skills
-        words = sorted(set(re.findall(r"[A-Za-z]{4,}", (job_text or "").lower())))[:10]
-        return {
-            "title": "",
-            "summary": job_text[:800],
-            "must_have_skills": [f"Experience with {w}" for w in words],
-            "nice_to_have_skills": [],
-            "certifications_required": [],
-            "years_experience_min": 0,
-            "location": "",
-            "other_hard_requirements": [],
-        }
-
-
-def llm_extract_profile(client, resume_text: str) -> Dict[str, Any]:
-    """
-    Extract a structured candidate profile from a resume using the LLM.
-    Falls back to simple regex heuristics if the API is unavailable.
-    """
-    # Heuristic fallback if no client or empty resume
-    if not client or not (resume_text or "").strip():
-        words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
-        emails = re.findall(
-            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-            resume_text or "",
-        )
-        return {
-            "name": "",
-            "emails": emails,
-            "summary": (resume_text or "")[:800],
-            "skills": words,
-            "certifications": [],
-            "roles": [],
-            "years_experience": 0,
-        }
-
-    prompt = f"""
-You are analyzing a construction industry resume.
-
-Read the resume text and return a JSON object with:
-- name: candidate name (string, may be empty if not obvious)
-- emails: list of email addresses found
-- summary: 2–4 sentence summary of their background
-- skills: list of 15–40 key skills / technologies / equipment / domains mentioned
-- certifications: list of licenses or certifications (PE, PMP, OSHA 30, etc.)
-- roles: list of typical role titles they have held (Project Manager, Superintendent, Estimator, Operator, etc.)
-- years_experience: integer estimate of total years of relevant experience
-
-Resume:
-\"\"\"{resume_text}\"\"\"
-
-Respond ONLY with a single JSON object and no extra commentary.
-"""
-
-    try:
-        resp = client.responses.create(
-            model=st.secrets.get("MODEL_NAME", "gpt-4.1-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You summarize construction resumes into structured JSON. "
-                        "Always respond with JSON only."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_output_tokens=900,
-            temperature=0,
-        )
-        raw = resp.output[0].content[0].text or ""
-        data = json.loads(raw)
-
-        # Normalize / ensure keys so downstream code does not crash
-        return {
-            "name": data.get("name", ""),
-            "emails": data.get("emails", []),
-            "summary": data.get("summary", (resume_text or "")[:800]),
-            "skills": data.get("skills", []),
-            "certifications": data.get("certifications", []),
-            "roles": data.get("roles", []),
-            "years_experience": int(data.get("years_experience", 0) or 0),
-        }
-
-    except Exception:
-        # If anything goes wrong, fall back to regex extraction
-        words = list(set(re.findall(r"[A-Za-z]{3,}", (resume_text or "").lower())))[:50]
-        emails = re.findall(
-            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-            resume_text or "",
-        )
-        return {
-            "name": "",
-            "emails": emails,
-            "summary": (resume_text or "")[:800],
-            "skills": words,
-            "certifications": [],
-            "roles": [],
-            "years_experience": 0,
-        }
-
-
-# ---------- SkillFit + highlights ----------
-
-def score_candidate(profile: Dict[str, Any], job: Dict[str, Any], emb_sim: float) -> float:
-    """
-    Approximate skill fit: must-have overlap + certs + embeddings, 0–1.
-    """
-    must = set(s.lower() for s in job.get("must_have_skills", []))
-    skills = set(s.lower() for s in profile.get("skills", []))
-
-    if must and not (must & skills):
-        base = 0.0
-    else:
-        mh_overlap = len(must & skills) / max(len(must), 1) if must else 0.6
-
-        cert_req = set(s.lower() for s in job.get("certifications_required", []))
-        certs = set(s.lower() for s in profile.get("certifications", []))
-        cert_match = 1.0 if (not cert_req or cert_req.issubset(certs)) else 0.0
-
-        years_ok = 1.0
-        if job.get("years_experience_min", 0) > 0:
-            years_ok = (
-                1.0
-                if profile.get("years_experience", 0) >= job["years_experience_min"]
-                else 0.6
-            )
-
-        base = (0.5 * mh_overlap + 0.2 * cert_match + 0.3 * emb_sim) * years_ok
-
-    return max(0.0, min(1.0, base))
-
-
-def build_highlights(job: Dict[str, Any], profile: Dict[str, Any], max_items: int = 5) -> List[Dict[str, Any]]:
-    """
-    Build top-N requirement highlights for tiles & PDF:
-    [
-      {"skill": "Work zone traffic control supervision", "met": True/False},
-      ...
+    cand_skills = [
+        str(s).strip().lower()
+        for s in candidate_profile.get("candidate_skills", [])
+        if str(s).strip()
     ]
-    """
-    reqs = [str(x).strip() for x in job.get("must_have_skills", []) if str(x).strip()]
-    skills = [s.lower() for s in profile.get("skills", [])]
+    cand_set = set(cand_skills)
 
     highlights: List[Dict[str, Any]] = []
-    for label in reqs[:max_items]:
+    for label in proj_must:
         lbl_lower = label.lower()
-        met = any((lbl_lower in s) or (s in lbl_lower) for s in skills)
+        met = lbl_lower in cand_set
         highlights.append({"skill": label, "met": met})
 
     return highlights
@@ -674,7 +457,6 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
     req_url = ss.get("req_url", "")
     cal_method = ss.get("cal_method", "Calendar link")
     cal_link = ss.get("cal_link", "")
-    cal_upload = ss.get("cal_upload")
     start_date = dt.date.fromisoformat(ss.get("start_date", str(dt.date.today())))
     end_date = dt.date.fromisoformat(ss.get("end_date", str(dt.date.today())))
     workdays_l = ss.get("workdays", ["Mon", "Tue", "Wed", "Thu", "Fri"])
@@ -700,41 +482,11 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
         st.error("Please upload a project requirements file or paste a valid job / RFP URL.")
         st.stop()
 
-    # LLM client
-    client = get_openai()
+    # -------- Project profile via new pipeline helpers --------
+    project_profile = build_project_profile(job_text)
+    # project_profile keys: project_summary, must_have_skills, nice_to_have_skills
 
-
-    # Extract job struct + embedding
-    job_struct = llm_extract_job(client, job_text)
-    job_emb = embed_text(client, job_text)
-
-    # Build candidates (profile + embedding + role inference)
-    candidates: List[Dict[str, Any]] = []
-    for up in resumes_raw:
-        stem = filename_stem(up.name)
-        text = extract_text_from_any(up)
-        prof = llm_extract_profile(client, text)
-        prof_emb = embed_text(client, text)
-
-        role_info = infer_resume_role(job_text, text)
-
-        candidates.append(
-            {
-                "id": stem,
-                "fname": up.name,
-                "stem": stem,
-                "name": prof.get("name", ""),
-                "emails": prof.get("emails", []),
-                "profile": prof,
-                "emb": prof_emb,
-                "role_bucket": role_info.get("bucket", "Out-of-scope"),
-                "role_title": role_info.get("role_title", "Unspecified role"),
-                "project_fit_summary": role_info.get("project_fit_summary", ""),
-                "unsuitable_reason": role_info.get("unsuitable_reason", ""),
-            }
-        )
-
-    # Gather calendars (urls/uploads) as bytes list
+    # -------- Calendar(s) --------
     calendars = []
     if cal_method == "Calendar link" and cal_link:
         try:
@@ -748,17 +500,8 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
                 }
             )
         except Exception:
-            pass
-    elif cal_method == "Manual Entry / Upload" and cal_upload:
-        b = cal_upload["data"]
-        calendars.append(
-            {
-                "id": filename_stem(cal_upload["name"]),
-                "fname": cal_upload["name"],
-                "stem": filename_stem(cal_upload["name"]),
-                "_bytes": b,
-            }
-        )
+            # If calendar fails, fall back to full-availability window
+            calendars = []
 
     # If no calendars, availability = baseline (full work window)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
@@ -786,21 +529,57 @@ with st.spinner("Analyzing inputs with AI and calendars…"):
             max_hours,
         )
 
-    # Compute availability, skill fit, highlights, and ReadiScore
+    # -------- Build candidates using new candidate profile helper --------
+    candidates: List[Dict[str, Any]] = []
+    for up in resumes_raw:
+        stem = filename_stem(up.name)
+        text = extract_text_from_any(up)
+
+        # LLM-based candidate profile
+        cand_profile = build_candidate_profile(text, project_profile)
+
+        # Skill match (0–100) then convert to 0–1 for ReadiScore
+        skill_match_pct = compute_skill_match(
+            project_profile.get("must_have_skills", []),
+            cand_profile.get("candidate_skills", []),
+        )
+        skillfit = skill_match_pct / 100.0
+
+        # Role inference (existing backend)
+        role_info = infer_resume_role(job_text, text)
+
+        candidates.append(
+            {
+                "id": stem,
+                "fname": up.name,
+                "stem": stem,
+                "profile": cand_profile,
+                "role_bucket": role_info.get("bucket", "Out-of-scope"),
+                "role_title": role_info.get("role_title", "Unspecified role"),
+                "project_fit_summary": role_info.get("project_fit_summary", ""),
+                "unsuitable_reason": role_info.get("unsuitable_reason", ""),
+                "skillfit": skillfit,
+            }
+        )
+
+    # -------- Compute availability, highlights, ReadiScore --------
     results: List[Dict[str, Any]] = []
     for c in candidates:
-        emb_sim = cosine(c["emb"], job_emb)
-        skillfit = score_candidate(c["profile"], job_struct, emb_sim)
         avail = availability_for_employee(c["id"])
         avail_frac = avail / max(window_baseline, 1)
-        readiscore = alpha * skillfit + (1.0 - alpha) * avail_frac
 
-        highlights = build_highlights(job_struct, c["profile"], max_items=5)
+        readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
+
+        highlights = build_highlights_from_profiles(
+            project_profile,
+            c["profile"],
+            max_items=5,
+        )
 
         results.append(
             {
                 "emp_id": c["id"],
-                "skillfit": round(skillfit, 4),
+                "skillfit": round(c["skillfit"], 4),
                 "hours": int(avail),
                 "readiscore": round(readiscore, 4),
                 "role_bucket": c["role_bucket"],
@@ -911,7 +690,7 @@ params = {
         {0, 1, 2, 3, 4},  # approximate for the caption; detailed mask already in results
         st.session_state.get("max_hours", 8),
     ),
-    "project_summary": job_struct.get("summary", ""),
+    "project_summary": project_profile.get("project_summary", ""),
     "role_counts": role_counts,
 }
 
