@@ -64,50 +64,44 @@ def infer_employee_display_name(stem: str, resume_text: str) -> str:
 
     return format_employee_label(stem)
 
-
 def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
     """
-    Build a set of loose tags for matching this candidate to calendar events.
+    Build a *minimal* set of tags for matching this candidate to calendar events.
+
+    Goal: avoid generic words like 'employee' or random resume words
+    so different employees don't all match the same events.
 
     Examples:
-      stem='Employee_010 Resume.pdf', display_name='Employee 010'
-      -> 'employee 010', 'employee_010', '010'
+      display_name='Employee 010', stem='Employee_010 Resume.pdf'
+      -> ['employee 010', 'employee_010', '010']
 
-      display_name='Bob Saget'
-      -> 'bob saget', 'bob', 'saget'
+      display_name='Jane Smith'
+      -> ['jane smith']   (NOT 'jane', 'smith' separately)
     """
     tags: Set[str] = set()
 
-    bases = []
-    for src in (display_name, stem):
-        s = (src or "").strip()
-        if not s:
-            continue
-        s = re.sub(r"\.[A-Za-z0-9]+$", "", s)
-        bases.append(s)
+    source = f"{display_name} {stem}"
 
-    for base in bases:
-        norm = base.replace("_", " ").strip()
-        if not norm:
-            continue
-        tags.add(norm.lower())
-
-        parts = [p for p in re.split(r"[^A-Za-z0-9]+", norm) if p]
-        if len(parts) >= 2:
-            tags.add((parts[0] + " " + parts[1]).lower())
-        for p in parts:
-            if len(p) >= 3:
-                tags.add(p.lower())
-
-    m = re.search(r"(Employee)[ _-]*0*(\d+)", stem, flags=re.IGNORECASE)
+    # 1) Strong pattern: Employee + number (your typical case)
+    m = re.search(r"(Employee)[ _-]*0*(\d+)", source, flags=re.IGNORECASE)
     if m:
-        num = m.group(2)
-        base_emp = m.group(1)
-        tags.add(f"{base_emp} {num}".lower())
-        tags.add(f"{base_emp} {num.zfill(3)}".lower())
-        tags.add(f"{base_emp}_{num.zfill(3)}".lower())
+        base = m.group(1).lower()       # 'employee'
+        num = m.group(2)                # '2' or '010'
+        num3 = num.zfill(3)             # '002'
+        tags.add(f"{base} {num}")
+        tags.add(f"{base} {num3}")
+        tags.add(f"{base}_{num3}")
+        tags.add(num3)                  # last-resort tag
+        return sorted(tags)
+
+    # 2) Fallback: use the full display name as a single tag
+    dn = (display_name or "").strip().lower()
+    if dn:
+        tags.add(dn)
 
     return sorted(tags)
+
+
 
 
 def infer_project_name_from_inputs(
@@ -714,14 +708,15 @@ def fetch_ics_bytes(url: str) -> bytes:
     except Exception:
         return b""
 
-
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
+    # ----- Set up calendar window -----
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
 
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
+    # ----- Build project text from RFP files / URL -----
     if req_files:
         parts = [extract_text_from_upload(f) for f in req_files]
         job_text = "\n\n".join(p for p in parts if p)
@@ -730,9 +725,13 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     else:
         job_text = ""
 
+    # LLM-driven project profile (scope, skills, company requirements, etc.)
     project_profile = build_project_profile(job_text)
+
+    # Heuristic project name based on filename / URL / first "project" line
     project_name = infer_project_name_from_inputs(req_files, req_url, job_text)
 
+    # ----- Calendar setup (currently one shared calendar link) -----
     calendars = []
     if cal_method == "Calendar link" and cal_link:
         b = fetch_ics_bytes(cal_link)
@@ -749,6 +748,11 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
     def availability_for_employee(tags: List[str]) -> int:
+        """
+        Compute remaining hours for one employee, based on the shared calendar
+        and their tag list (usually things like 'employee 007', 'employee_007').
+        If no calendar is configured, everyone gets the full baseline.
+        """
         if not calendars:
             return window_baseline
         cal_bytes = calendars[0]["_bytes"]
@@ -761,23 +765,47 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             max_hours,
         )
 
+    # ----- Build candidate list from uploaded resumes -----
     candidates: List[Dict[str, Any]] = []
+
     for up in resumes_raw:
+        # Normalised ID from filename
         stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
         text = extract_text_from_upload(up)
 
+        # Display name like "Employee 007"
         display_name = infer_employee_display_name(stem, text)
+
+        # Calendar tags for this person
         calendar_tags = build_employee_calendar_tags(display_name, stem)
 
+        # LLM candidate profile (skills, matched/missing, narrative summary, etc.)
         cand_profile = build_candidate_profile(text, project_profile)
-        skill_match_pct = cand_profile.get("skill_match_percent")
-        if skill_match_pct is None:
-            skill_match_pct = compute_skill_match(
-                project_profile.get("must_have_skills", []),
-                cand_profile.get("candidate_skills", []),
-            )
+
+        # ---------- NEW: compute skill match from matched/missing lists ----------
+        matched = cand_profile.get("matched_must_have_skills")
+        missing = cand_profile.get("missing_must_have_skills")
+
+        if isinstance(matched, list) or isinstance(missing, list):
+            matched_clean = [str(s).strip() for s in (matched or []) if str(s).strip()]
+            missing_clean = [str(s).strip() for s in (missing or []) if str(s).strip()]
+            total = len(matched_clean) + len(missing_clean)
+            if total > 0:
+                skill_match_pct = (len(matched_clean) / total) * 100.0
+            else:
+                skill_match_pct = 0.0
+        else:
+            # Fallback to whatever the LLM gave us, or a simple overlap score
+            skill_match_pct = cand_profile.get("skill_match_percent")
+            if skill_match_pct is None:
+                skill_match_pct = compute_skill_match(
+                    project_profile.get("must_have_skills", []),
+                    cand_profile.get("candidate_skills", []),
+                )
+
         skillfit = float(skill_match_pct) / 100.0
 
+        # Role bucket / narrative from roles_backend
         role_info = infer_resume_role(job_text, text)
 
         candidates.append(
@@ -796,13 +824,17 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             }
         )
 
+    # ----- Combine skills + availability into final scores -----
     results: List[Dict[str, Any]] = []
+
     for c in candidates:
         avail = availability_for_employee(c.get("calendar_tags", []))
         avail_frac = avail / max(window_baseline, 1)
 
+        # ReadiScore: weighted 70/30 (skills vs availability)
         readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
 
+        # Tile highlights (✓ / ✗ lists)
         highlights = build_highlights_from_profiles(
             project_profile,
             c["profile"],
@@ -828,6 +860,8 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     return results, project_profile, window_baseline, project_name
 
 
+
+
 # ---------------------------------------------------------------------------
 # Render results (bucketed tiles)
 # ---------------------------------------------------------------------------
@@ -837,8 +871,6 @@ with st.spinner("Analyzing documents and pulling calendar availability..."):
 
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
-if project_name:
-    st.caption(f"Project: {project_name}")
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
