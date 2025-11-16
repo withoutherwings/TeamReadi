@@ -265,7 +265,6 @@ def read_text_from_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Calendar & availability helpers
 # ---------------------------------------------------------------------------
-
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
     window_start: dt.datetime,
@@ -294,12 +293,10 @@ def busy_blocks_from_ics_for_employee(
             if not any(tag in summary for tag in tag_list):
                 continue
 
-if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
-    dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
-
-if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
-    dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
-
+        if isinstance(dtstart, dt.date) and not isinstance(dtstart, dt.datetime):
+            dtstart = dt.datetime.combine(dtstart, dt.time.min).replace(tzinfo=UTC)
+        if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
+            dtend = dt.datetime.combine(dtend, dt.time.min).replace(tzinfo=UTC)
 
         s = max(window_start, dtstart)
         e = min(window_end, dtend)
@@ -307,14 +304,17 @@ if isinstance(dtend, dt.date) and not isinstance(dtend, dt.datetime):
             blocks.append((s, e))
 
     blocks.sort(key=lambda x: x[0])
-    merged: List[List[dt.datetime]] = []
+    merged: List[Tuple[dt.datetime, dt.datetime]] = []
+
     for s, e in blocks:
         if not merged or s > merged[-1][1]:
-            merged.append([s, e])
+            merged.append((s, e))
         else:
-            merged[-1][1] = max(merged[-1][1], e)
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
 
-    return [(s, e) for s, e in merged]
+    return merged
+
+
 
 
 def total_work_hours(
