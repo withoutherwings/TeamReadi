@@ -254,50 +254,67 @@ def compute_metrics_for_employee(emp_data: Dict[str, Any], skill_match_pct: floa
         "readiscore": readiscore,
     }
 
-
-# =======================
-# LLM Explanation Generation
-# =======================
-
-def llm_explain_employee(
-    employee_id: str,
-    metrics: Dict[str, Any],
-    project_name: Optional[str] = None,
-) -> str:
+# --- LLM helper: short explanation per employee ---
+def llm_explain_employee(project_summary, candidate_summary, metrics) -> str:
     """
-    Generate a short human-readable explanation using OpenAI Responses API.
+    Use the LLM to generate a short narrative explanation for one employee.
+
+    project_summary: short text describing the project / RFP.
+    candidate_summary: distilled resume summary for this candidate.
+    metrics: dict with things like skill_match (0–1), availability_hours, readiscore, etc.
+
+    Returns: 2–3 sentence paragraph (string).
     """
-    proj = project_name or "this project"
+    # `client` is defined at the top of this module using your OPENAI_API_KEY.
+    global client
+
+    # Be defensive in case metrics is None
+    metrics_text = ""
+    if metrics:
+        # very simple readable metrics dump
+        pieces = []
+        for k, v in metrics.items():
+            pieces.append(f"{k}: {v}")
+        metrics_text = "\n".join(pieces)
 
     prompt = f"""
-You are generating a concise explanation for a workforce readiness dashboard.
+    You are helping a construction manager understand if a specific employee is a good fit
+    for an upcoming project.
 
-Employee: {employee_id}
-Project: {proj}
+    PROJECT SUMMARY:
+    {project_summary}
 
-Metrics:
-- Skill match: {metrics['skill_match_pct']:.1f}%
-- Booked hours: {metrics['booked_hours']:.1f}
-- Capacity: {metrics['capacity_hours']:.1f}
-- Availability: {metrics['availability_pct']:.1f}%
-- ReadiScore: {metrics['readiscore']:.1f}
+    CANDIDATE SUMMARY:
+    {candidate_summary}
 
-Write 3–5 sentences:
-- One-line summary of readiness
-- Comment on utilization level (over- or under-loaded)
-- Note any tradeoff between skill and availability
-- Clear, factual, professional tone
-"""
+    METRICS:
+    {metrics_text}
 
-resp = client.chat.completions.create(
-    model="gpt-4.1-mini",
-    messages=[
-        {"role": "system", "content": "You generate professional staffing analytics summaries."},
-        {"role": "user", "content": prompt},
-    ],
-    temperature=0,
-    max_tokens=220,
-)
+    Write a concise 2–3 sentence explanation in plain language that:
+    - States how well this employee's skills align with the project requirements.
+    - Comments on their availability in the upcoming window.
+    - Mentions 1–2 key strengths and any major gaps.
 
-return resp.choices[0].message.content
+    Do not restate all the metrics verbatim. Be specific but brief.
+    """
+
+    resp = client.chat.completions.create(
+        model=os.getenv("MODEL_NAME", "gpt-4o"),
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an assistant for a construction workforce planning tool. "
+                    "You write short, neutral, professional explanations for staffing decisions."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        max_tokens=220,
+    )
+
+    return resp.choices[0].message.content.strip()
+
+
 
