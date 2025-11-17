@@ -101,63 +101,6 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
 
     return sorted(tags)
 
-def infer_project_name_from_inputs(
-    req_files: List[Any],
-    req_url: Optional[str],
-    job_text: str,
-) -> str:
-    """
-    Choose a clean, human-friendly project name.
-
-    Priority:
-      1) Lines mentioning 'Infrastructure Upgrades' and a Medical Center / VAMC
-      2) Lines with 'Upgrades' + a dash (project – location)
-      3) Fallback to uploaded file name or URL tail
-    """
-
-    def _clean_line(s: str) -> str:
-        s = s.strip()
-        # If there's an ' at ' or ' – ' we usually want the part before location
-        low = s.lower()
-        if " at " in low:
-            return s.split(" at ")[0].strip()
-        if " – " in s:
-            return s.split(" – ")[0].strip()
-        if " - " in s:
-            return s.split(" - ")[0].strip()
-        return s
-
-    lines = [ln.strip() for ln in (job_text or "").splitlines() if ln.strip()]
-
-    # 1) Look for explicit Infrastructure Upgrades at a VAMC / Medical Center
-    for ln in lines:
-        low = ln.lower()
-        if "infrastructure upgrades" in low and ("medical center" in low or "vamc" in low):
-            return _clean_line(ln)
-
-    # 2) Generic "Upgrades" lines with dash
-    for ln in lines:
-        if "upgrades" in ln and (" - " in ln or " – " in ln):
-            return _clean_line(ln)
-
-    # 3) Fallback: RFP filename
-    if req_files:
-        first = req_files[0]
-        name = getattr(first, "name", "") or getattr(first, "filename", "")
-        base = filename_stem(name)
-        cleaned = re.sub(r"[_\-]+", " ", base).strip()
-        if cleaned:
-            return cleaned
-
-    # 4) Fallback: URL tail
-    if req_url:
-        path = str(req_url).rstrip("/").split("/")[-1]
-        base = filename_stem(path)
-        cleaned = re.sub(r"[_\-]+", " ", base).strip()
-        if cleaned:
-            return cleaned
-
-    return ""
 
 
 # ---------------------------------------------------------------------------
