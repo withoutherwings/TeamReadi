@@ -302,111 +302,131 @@ Return ONLY a valid JSON object with exactly these keys:
 
 
 # ---------------------------------------------------------------------------
-# Candidate profile
+# Candidate profile (uses project_summary P3 to align skills)
 # ---------------------------------------------------------------------------
 
-def build_candidate_profile(resume_text: str, project_profile: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Evaluate one candidate resume against the project profile.
+from typing import Dict, Any
 
-    Return:
-    {
-      "candidate_summary": str,
-      "candidate_skills": [str, ...],
-      "strengths": [str, ...],
-      "gaps": [str, ...],
-      "matched_must_have_skills": [str, ...],
-      "missing_must_have_skills": [str, ...],
-      "skill_match_percent": float
-    }
-    """
-    trimmed_resume = (resume_text or "").strip()[:8000]
 
-    project_summary = project_profile.get("project_summary", "")
-    must_have_skills = project_profile.get("must_have_skills", []) or []
-    nice_to_have_skills = project_profile.get("nice_to_have_skills", []) or []
+def build_candidate_profile(
+    resume_text: str,
+    project_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Analyze a single candidate resume against the project profile.
+
+    Uses:
+      - project_summary P3 (team responsibilities) as the "what this team does"
+      - must_have_skills from the project_profile
+    to classify which must-have skills are met vs missing and to compute a
+    skill_match_percent that stays consistent with the matched/missing lists.
+    """
+
+    resume_text = resume_text or ""
+
+    # Project "must-have" skills list
+    proj_must = [
+        str(s).strip()
+        for s in project_profile.get("must_have_skills", [])
+        if str(s).strip()
+    ]
+
+    # Pull the "team responsibilities" paragraph = last paragraph of summary
+    summary = project_profile.get("project_summary", "") or ""
+    paras = [p.strip() for p in summary.split("\n\n") if p.strip()]
+    team_resp = paras[-1] if paras else summary
 
     prompt = f"""
-You are evaluating a construction professional for a specific project.
+You are evaluating a construction candidate resume against a specific project.
 
-You are given:
-
-PROJECT SUMMARY:
-{project_summary}
-
-MUST-HAVE SKILLS:
-{must_have_skills}
-
-NICE-TO-HAVE SKILLS:
-{nice_to_have_skills}
-
-CANDIDATE RESUME:
+PROJECT TEAM RESPONSIBILITIES (from RFP summary, P3):
 ---
-{trimmed_resume}
+{team_resp}
 ---
 
-Your tasks:
+PROJECT MUST-HAVE SKILLS (person-level, not company ownership):
+- """ + "\n- ".join(proj_must or ["<none explicitly listed>"]) + """
 
-1. Decide which MUST-HAVE skills the candidate clearly meets.
-   - Treat organizational set-aside conditions (e.g., SDVOSB certification,
-     woman-owned business status, bonding capacity, etc.) as attributes of the
-     bidding firm, not the individual employee. Do NOT mark these as "met" or
-     "missing" for a candidate unless the resume explicitly shows that this
-     person owns or leads such a certified business.
-   - You may still mention these firm-level conditions in the project context
-     in the candidate_summary if it helps explain overall fit, but do not count
-     them as individual strengths or gaps.
-2. Decide which MUST-HAVE skills are clearly missing or too weak at the
-   individual level (e.g., no federal VA project experience, no similar
-   infrastructure or EHRM background, no relevant schedule/cost control).
-3. Extract 10–20 SHORT "candidate_skills" phrases that describe this candidate,
-   focusing on project-relevant hard and soft skills.
-4. Write "candidate_summary": 1–3 sentences about how well this person fits
-   this specific project.
-5. Write 3–6 SHORT bullet phrases under "strengths" focused on this project.
-6. Write 3–6 SHORT bullet phrases under "gaps" focused on this project.
-7. Compute "skill_match_percent" = 100 * (# MUST-HAVE skills met) /
-   (total MUST-HAVE).
+RESUME TEXT:
+---
+{resume_text[:9000]}
+---
 
-Return ONLY a JSON object with keys:
-"candidate_summary",
-"candidate_skills",
-"strengths",
-"gaps",
-"matched_must_have_skills",
-"missing_must_have_skills",
-"skill_match_percent".
+1. Read the project responsibilities and must-have skills carefully.
+2. Read the resume and infer the candidate's key skills and experiences.
+
+Return ONLY a JSON object with these keys:
+
+- "candidate_skills": an array of SHORT skill phrases derived from the resume
+  (e.g. "healthcare CM at VA facilities", "EHRM infrastructure upgrades").
+- "matched_must_have_skills": array of must-have skills (from the project list)
+  that this candidate clearly demonstrates.
+- "missing_must_have_skills": array of must-have skills from the project list
+  that are clearly NOT demonstrated in the resume.
+- "strengths": 3–6 bullet-style phrases describing this candidate's best
+  alignment with the project (focus on project-relevant experience).
+- "gaps": 3–6 bullet-style phrases describing the main concerns / gaps vs the
+  project requirements.
+- "candidate_summary": a 2–3 sentence paragraph describing how well this
+  candidate fits the project and what role they are best suited for.
+- "skill_match_percent": an integer from 0 to 100 representing how well the
+  candidate meets the must-have skills OVERALL. Rough guideline:
+    * 90–100: nearly all must-haves clearly met
+    * 70–89: most must-haves met, a few minor gaps
+    * 40–69: mixed; several important gaps
+    * 10–39: weak fit; only a few must-haves met
+    * 0–9: almost no relevant must-haves met
+
+Return ONLY JSON. Do not include any explanation outside the JSON.
 """
+
     data = _llm_json(prompt) or {}
-    if not isinstance(data, dict):
-        data = {}
 
-    candidate_summary = (data.get("candidate_summary") or "").strip()
-    candidate_skills = [str(s).strip() for s in (data.get("candidate_skills") or []) if str(s).strip()]
-    strengths = [str(s).strip() for s in (data.get("strengths") or []) if str(s).strip()]
-    gaps = [str(s).strip() for s in (data.get("gaps") or []) if str(s).strip()]
-    matched = [str(s).strip() for s in (data.get("matched_must_have_skills") or []) if str(s).strip()]
-    missing = [str(s).strip() for s in (data.get("missing_must_have_skills") or []) if str(s).strip()]
-    skill_match_percent = data.get("skill_match_percent")
+    # ---- Normalize arrays ----
+    def _as_str_list(x) -> list[str]:
+        if isinstance(x, str):
+            return [x.strip()] if x.strip() else []
+        if isinstance(x, (list, tuple, set)):
+            out = []
+            for item in x:
+                s = str(item).strip()
+                if s:
+                    out.append(s)
+            return out
+        return []
 
-    # Robust fallback for score
-    try:
-        skill_match_percent = float(skill_match_percent)
-    except (TypeError, ValueError):
-        if must_have_skills:
-            matched_norm = _normalize_phrase_list(matched)
-            must_norm = _normalize_phrase_list(must_have_skills)
-            pct = 100.0 * len(matched_norm & must_norm) / max(1, len(must_norm))
-            skill_match_percent = round(pct, 1)
+    cand_skills = _as_str_list(data.get("candidate_skills"))
+    matched_raw = _as_str_list(data.get("matched_must_have_skills"))
+    missing_raw = _as_str_list(data.get("missing_must_have_skills"))
+    strengths = _as_str_list(data.get("strengths"))
+    gaps = _as_str_list(data.get("gaps"))
+
+    # ---- Compute skill_match_percent if missing or obviously bad ----
+    skill_match = data.get("skill_match_percent")
+    valid_skill_match = isinstance(skill_match, (int, float)) and 0 <= skill_match <= 100
+
+    if not valid_skill_match:
+        # Derive % from matched vs total must-have skills
+        total_must = len(proj_must)
+        if total_must > 0:
+            # We trust the LLM's classification here
+            n_matched = len(matched_raw)
+            derived = int(round(100.0 * n_matched / total_must))
+            skill_match = derived
         else:
-            skill_match_percent = compute_skill_match(must_have_skills, candidate_skills)
+            skill_match = 0
 
-    return {
-        "candidate_summary": candidate_summary,
-        "candidate_skills": candidate_skills,
+    # ---- Candidate summary text ----
+    candidate_summary = (data.get("candidate_summary") or "").strip()
+
+    profile: Dict[str, Any] = {
+        "candidate_skills": cand_skills,
+        "matched_must_have_skills": matched_raw,
+        "missing_must_have_skills": missing_raw,
         "strengths": strengths,
         "gaps": gaps,
-        "matched_must_have_skills": matched,
-        "missing_must_have_skills": missing,
-        "skill_match_percent": float(skill_match_percent),
+        "candidate_summary": candidate_summary,
+        "skill_match_percent": skill_match,
     }
+    return profile
+
