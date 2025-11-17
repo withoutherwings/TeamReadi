@@ -945,8 +945,7 @@ for b in BUCKET_ORDER:
                 f"""
 st.markdown(
     f"""
-<div class="teamreadi-card"
-     style="
+<div class="teamreadi-card" style="
        background-color:#082A4C;
        border-radius:22px;
        padding:16px 18px 14px;
