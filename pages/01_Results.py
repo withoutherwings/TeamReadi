@@ -943,6 +943,8 @@ for b in BUCKET_ORDER:
 
             st.markdown(
                 f"""
+st.markdown(
+    f"""
 <div class="teamreadi-card"
      style="
        background-color:#082A4C;
@@ -973,17 +975,18 @@ for b in BUCKET_ORDER:
   <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 10px;"></div>
 
   <!-- Icon + ReadiScore -->
-  <div style="display:flex;align-items:center;margin:4px 0 10px;">
+  <div style="display:flex;align-items:center;margin:6px 0 12px;">
     <div style="
-    width:100px;
-    height:100px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    margin-right:14px;
-">
-  <img src="data:image/png;base64,{WORKER_ICON}" style="width:92px;height:92px;" />
-</div>
+        width:120px;
+        height:120px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        margin-right:16px;
+    ">
+      <img src="data:image/png;base64,{WORKER_ICON}"
+           style="width:110px;height:110px;" />
+    </div>
 
     <div>
       <div style="font-size:2.1rem;font-weight:900;line-height:1.1;color:#FF8A1E;">
@@ -1023,8 +1026,8 @@ for b in BUCKET_ORDER:
   </div>
 </div>
 """,
-                unsafe_allow_html=True,
-            )
+    unsafe_allow_html=True,
+)
 
 
 # ---------------------------------------------------------------------------
