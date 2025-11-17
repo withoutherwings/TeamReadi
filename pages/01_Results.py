@@ -927,5 +927,9 @@ from streamlit_extras.switch_page_button import switch_page
 
 # ---- Return to Start ----
 if st.button("Return to Start"):
-    switch_page("streamlit app")
+    st.write(
+        "<script>parent.window.location.href='/'</script>",
+        unsafe_allow_html=True,
+    )
+
 
