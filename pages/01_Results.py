@@ -10,7 +10,7 @@ from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
 from bs4 import BeautifulSoup
-
+from streamlit_extras.switch_page_button import switch_page
 from backend.roles_backend import infer_resume_role
 from backend.pipeline import (
     build_project_profile,
@@ -923,10 +923,9 @@ st.download_button(
     mime="application/pdf",
 )
 
+from streamlit_extras.switch_page_button import switch_page
+
 # ---- Return to Start ----
 if st.button("Return to Start"):
-    st.markdown(
-        """<script>window.location.href='https://teamreadi.streamlit.app/';</script>""",
-        unsafe_allow_html=True
-    )
+    switch_page("streamlit app")
 
