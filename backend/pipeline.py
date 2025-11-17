@@ -260,6 +260,10 @@ Return ONLY a valid JSON object with exactly these keys:
 # Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
+from typing import Dict, Any, List, Optional
+import json
+
+
 def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
     """
     FIRST STAGE: look ONLY at the resume and pull out a grounded skill list.
@@ -318,38 +322,6 @@ Return ONLY a JSON object with keys:
     return {"candidate_summary": summary, "raw_skills": skills}
 
 
-def compute_skill_match(
-    must_have_skills: List[str],
-    candidate_skills: List[str],
-    matched_must_have_skills: Optional[List[str]] = None,
-) -> float:
-    """
-    Compute a conservative skill-match percentage (0–100).
-
-    Primary logic:
-      - We only score against project *must-have* skills.
-      - If we have an explicit matched_must_have_skills list, we trust that
-        and use it directly.
-      - Otherwise we fall back to simple phrase overlap.
-    """
-    must = [s.strip().lower() for s in must_have_skills if s and s.strip()]
-    if not must:
-        return 0.0
-
-    if matched_must_have_skills is not None:
-        matched_norm = {
-            s.strip().lower() for s in matched_must_have_skills if s and s.strip()
-        }
-        hits = sum(1 for m in must if m in matched_norm)
-    else:
-        cand_norm = {
-            s.strip().lower() for s in candidate_skills if s and s.strip()
-        }
-        hits = sum(1 for m in must if m in cand_norm)
-
-    return 100.0 * float(hits) / float(len(must))
-
-
 def build_candidate_profile(
     resume_text: str,
     project_profile: Dict[str, Any],
@@ -359,19 +331,30 @@ def build_candidate_profile(
 
     Pipeline:
       1) Call extract_resume_skills() to get a grounded list of skills.
-      2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
-      3) Ask it to decide which project must-haves are met vs missing, and to
+      2) Show ONLY those skills + the project must/nice-to-have lists and
+         a short description of what the team will actually do (P3).
+      3) Ask the model to classify each must-have as yes / maybe / no and
          write strengths/gaps WITHOUT inventing new skills.
     """
     base = extract_resume_skills(resume_text)
-    candidate_summary = base["candidate_summary"]
+    candidate_background = base["candidate_summary"]
     raw_skills = base["raw_skills"]
 
     must = project_profile.get("must_have_skills") or []
     nice = project_profile.get("nice_to_have_skills") or []
 
+    # Use last paragraph of the project summary as "what the team will do"
+    summary_text = project_profile.get("project_summary", "") or ""
+    paras = [p.strip() for p in summary_text.split("\n\n") if p.strip()]
+    team_resp = paras[-1] if paras else summary_text
+
     prompt = f"""
 You are aligning ONE candidate's resume skills to ONE construction project.
+
+PROJECT TEAM RESPONSIBILITIES (what this team actually does):
+---
+{team_resp}
+---
 
 PROJECT REQUIREMENTS (from the RFP):
 - Must-have skills (individual person-level, not company status):
@@ -382,80 +365,126 @@ PROJECT REQUIREMENTS (from the RFP):
 CANDIDATE SKILLS (derived directly from the resume and MUST NOT be changed):
 {json.dumps(raw_skills, indent=2, ensure_ascii=False)}
 
-Your tasks:
+For EACH must-have skill in the project list, you MUST put it in exactly ONE
+of three buckets:
+  - clearly matched by the candidate skills ("yes"),
+  - partially or indirectly supported ("maybe"),
+  - clearly not supported ("no").
 
-1. Decide which project must-have skills are clearly supported by the
-   candidate skills. Treat a must-have as "matched" only if there is a direct
-   or very close semantic match in CANDIDATE SKILLS.
+Return ONLY a JSON object with keys:
 
-2. Build two lists:
-   - "matched_must_have_skills": project must-have phrases that ARE supported.
-   - "missing_must_have_skills": project must-have phrases that are NOT clearly
-     supported.
+- "matched_must_have_skills": array of must-have phrases classified as "yes".
+- "partial_must_have_skills": array of must-have phrases classified as "maybe".
+- "missing_must_have_skills": array of must-have phrases classified as "no".
 
-3. Write:
-   - "strengths": 3–6 short bullet phrases (max ~15 words each) describing
-     this candidate's BEST strengths for THIS project.
-   - "gaps": 3–6 short bullet phrases describing the most important weaknesses
-     or missing requirements vs THIS project.
+- "strengths": 3–6 short bullet phrases (max ~15 words each) describing
+  this candidate's BEST strengths for THIS project.
+
+- "gaps": 3–6 short bullet phrases describing the most important weaknesses
+  or missing requirements vs THIS project. Focus on meaningful person-level
+  gaps (no large healthcare projects, limited PM responsibility, etc.), not
+  trivia about specific legal clauses or state regs unless those are strict
+  must-haves.
+
+- "project_fit_summary": 2–3 sentences answering:
+    * How useful would this person be on THIS project?
+    * In what role (lead PM, support PM, field coordinator, etc.)?
+    * Are they a stretch fit, solid fit, or weak fit overall?
 
 Important rules:
 - You MAY NOT invent new candidate skills that are not in CANDIDATE SKILLS.
-- You MAY NOT upgrade generic healthcare or transportation experience into
-  highly specific systems (e.g. "extensive EHRM experience") unless that
-  system is explicitly mentioned in CANDIDATE SKILLS.
-- Focus "gaps" on meaningful person-level skills and experience patterns
-  (e.g. no large healthcare projects, limited PM responsibility).
-- Avoid trivia and ultra-specific legal/contract points as gaps, such as:
-    * liquidated damages clauses
-    * knowledge of a particular state's procurement laws or regulations
-    * having worked at the exact named facility
-  unless those are spelled out as strict must-haves AND clearly absent.
-
-Return ONLY a JSON object with keys:
-  "matched_must_have_skills"
-  "missing_must_have_skills"
-  "strengths"
-  "gaps"
+- You MAY NOT upgrade generic experience into hyper-specific systems
+  (e.g. "extensive EHRM experience") unless that language appears in
+  CANDIDATE SKILLS.
 """
 
     data = _llm_json(prompt) or {}
 
-    matched = [
-        str(s).strip()
-        for s in data.get("matched_must_have_skills") or []
-        if str(s).strip()
-    ]
-    missing = [
-        str(s).strip()
-        for s in data.get("missing_must_have_skills") or []
-        if str(s).strip()
-    ]
-    strengths = [
-        str(s).strip()
-        for s in data.get("strengths") or []
-        if str(s).strip()
-    ]
-    gaps = [
-        str(s).strip()
-        for s in data.get("gaps") or []
-        if str(s).strip()
-    ]
+    def _as_str_list(x) -> list[str]:
+        if isinstance(x, str):
+            return [x.strip()] if x.strip() else []
+        if isinstance(x, (list, tuple, set)):
+            out = []
+            for item in x:
+                s = str(item).strip()
+                if s:
+                    out.append(s)
+            return out
+        return []
 
-    # Deterministic skill-match percentage based on must-have list
+    matched = _as_str_list(data.get("matched_must_have_skills"))
+    partial = _as_str_list(data.get("partial_must_have_skills"))
+    missing = _as_str_list(data.get("missing_must_have_skills"))
+    strengths = _as_str_list(data.get("strengths"))
+    gaps = _as_str_list(data.get("gaps"))
+    project_fit_summary = (data.get("project_fit_summary") or "").strip()
+
+    # Deterministic skill-match percentage:
+    # yes  = 1.0 point, maybe = 0.5 point, no = 0.
     skill_match_percent = compute_skill_match(
-        project_profile.get("must_have_skills", []),
-        raw_skills,
+        must_have_skills=must,
+        candidate_skills=raw_skills,
         matched_must_have_skills=matched,
+        partial_must_have_skills=partial,
     )
 
     profile: Dict[str, Any] = {
-        "candidate_summary": candidate_summary,
+        "candidate_background_summary": candidate_background,
         "candidate_skills": raw_skills,
         "matched_must_have_skills": matched,
+        "partial_must_have_skills": partial,
         "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
+        "project_fit_summary": project_fit_summary,
         "skill_match_percent": skill_match_percent,
     }
     return profile
+
+
+def compute_skill_match(
+    must_have_skills: List[str],
+    candidate_skills: List[str],  # kept for backwards compatibility
+    matched_must_have_skills: Optional[List[str]] = None,
+    partial_must_have_skills: Optional[List[str]] = None,
+) -> float:
+    """
+    Compute a conservative skill-match percentage (0–100).
+
+    Logic:
+      - We only score against project *must-have* skills.
+      - If we have explicit matched/partial lists, we trust those:
+          yes  = 1.0 point
+          maybe = 0.5 point
+          no   = 0
+      - If they are missing, we fall back to simple string overlap.
+    """
+    must = [s.strip().lower() for s in must_have_skills if s and s.strip()]
+    if not must:
+        return 0.0
+
+    # If LLM gave us explicit buckets, use them
+    if matched_must_have_skills is not None or partial_must_have_skills is not None:
+        matched_norm = {
+            s.strip().lower() for s in (matched_must_have_skills or []) if s and s.strip()
+        }
+        partial_norm = {
+            s.strip().lower() for s in (partial_must_have_skills or []) if s and s.strip()
+        }
+
+        yes_hits = sum(1 for m in must if m in matched_norm)
+        maybe_hits = sum(
+            1 for m in must
+            if (m in partial_norm) and (m not in matched_norm)
+        )
+
+        score = float(yes_hits) + 0.5 * float(maybe_hits)
+        return 100.0 * score / float(len(must))
+
+    # Fallback: naive overlap between must-have phrases and candidate skills
+    cand_norm = {
+        s.strip().lower() for s in candidate_skills if s and s.strip()
+    }
+    hits = sum(1 for m in must if m in cand_norm)
+    return 100.0 * float(hits) / float(len(must))
+
