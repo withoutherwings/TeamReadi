@@ -1,4 +1,5 @@
 streamlit
+streamlit-extras
 python-docx
 pymupdf
 icalendar
