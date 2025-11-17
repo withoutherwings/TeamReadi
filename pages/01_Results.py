@@ -415,28 +415,46 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     project_name = params.get("project_name") or ""
 
     def header():
-        # Title with optional project byline
-        title = "ReadiReport"
-        if project_name:
-            title = f"ReadiReport: {project_name}"
+    # Title with optional project byline
+    title = "ReadiReport"
+    if project_name:
+        title = f"ReadiReport: {project_name}"
 
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(72, h - 72, title)
+    c.setFont("Helvetica-Bold", 18)
+    max_width = 470  # printable width before it runs off the page
+    y_title = h - 72
 
-        c.setFont("Helvetica", 10)
-        y0 = h - 90
-        c.drawString(
-            72,
-            y0,
-            f"Window: {params.get('start_date')} to {params.get('end_date')}",
-        )
-        y0 -= 14
-        c.drawString(
-            72,
-            y0,
-            f"Workdays: {', '.join(params.get('workdays', []))}   "
-            f"Max hrs/day: {params.get('max_hours')}",
-        )
+    # Split long titles across multiple lines
+    words = title.split()
+    line = []
+    for w in words:
+        if c.stringWidth(" ".join(line + [w]), "Helvetica-Bold", 18) <= max_width:
+            line.append(w)
+        else:
+            c.drawString(72, y_title, " ".join(line))
+            y_title -= 22
+            line = [w]
+
+    # draw last line
+    if line:
+        c.drawString(72, y_title, " ".join(line))
+
+    y0 = y_title - 18  # continue the header below wrapped title
+
+    c.setFont("Helvetica", 10)
+    y0 -= 14
+    c.drawString(
+        72,
+        y0,
+        f"Window: {params.get('start_date')} to {params.get('end_date')}",
+    )
+    y0 -= 14
+    c.drawString(
+        72,
+        y0,
+        f"Workdays: {', '.join(params.get('workdays', []))}   Max hrs/day: {params.get('max_hours')}",
+    )
+
 
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
@@ -888,11 +906,11 @@ for b in BUCKET_ORDER:
             for h in hl:
                 status = h.get("status")
                 if status == "yes":
-                    icon = "✓"
+                    icon = "✅"
                 elif status == "maybe":
                     icon = "⚠️"
                 else:
-                    icon = "✗"
+                    icon = "❌"
                 lines.append(f"{icon} {h.get('skill','')}")
             # Turn the lines into simple HTML with line breaks
             if lines:
