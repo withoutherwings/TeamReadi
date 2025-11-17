@@ -894,6 +894,11 @@ for b in BUCKET_ORDER:
                 else:
                     icon = "✗"
                 lines.append(f"{icon} {h.get('skill','')}")
+            # Turn the lines into simple HTML with line breaks
+            if lines:
+                highlights_html = "<br>".join(lines)
+            else:
+                highlights_html = "No project-specific highlights identified yet."
 
             st.markdown(
                 f"""
