@@ -963,22 +963,20 @@ st.download_button(
     mime="application/pdf",
 )
 
-st.write("")
-
+# ---- Return to Start ----
 if st.button("Return to Start"):
-    # Clear session state
+    # Clear all session values
     for k in list(st.session_state.keys()):
         del st.session_state[k]
 
-    # Instant redirect BEFORE rerun so the app doesn't think
+    # Set flag to trigger redirect on next render
     st.session_state["__force_home__"] = True
-    st.experimental_rerun()
+    st.rerun()
 
-# Handle forced return to home
+# After rerun, handle forced redirect
 if st.session_state.get("__force_home__", False):
     st.session_state.clear()
-    # critical: re-route without running pipeline again
     st.markdown(
-        '<script>window.location.href = "https://teamreadi.streamlit.app";</script>',
+        '<script>window.location.href="https://teamreadi.streamlit.app";</script>',
         unsafe_allow_html=True,
     )
