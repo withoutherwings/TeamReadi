@@ -943,49 +943,53 @@ for b in BUCKET_ORDER:
 
             st.markdown(
                 f"""
-<div class="teamreadi-card" style="
-  background-color:#082A4C;
-  border-radius:22px;
-  padding:16px 18px 14px;
-  margin-bottom:18px;
-  box-shadow:0 8px 16px rgba(0,0,0,0.25);
-  color:white;
-  width:260px;
-  min-height:280px;
-  margin-left:auto;
-  margin-right:auto;
-  display:flex;
-  flex-direction:column;
+<div class="teamreadi-card"
+     style="
+       background-color:#082A4C;
+       border-radius:22px;
+       padding:16px 18px 14px;
+       margin-bottom:18px;
+       box-shadow:0 8px 16px rgba(0,0,0,0.25);
+       color:white;
+       width:260px;
+       min-height:280px;
+       margin-left:auto;
+       margin-right:auto;
+       display:flex;
+       flex-direction:column;
 ">
-
   <!-- Name -->
   <div style="
-    font-size:1.3rem;
-    font-weight:800;
-    color:#FF8A1E;
-    margin-bottom:6px;
-    text-transform:uppercase;
-">
-  {display_name}
-</div>
+      font-size:1.3rem;
+      font-weight:800;
+      color:#FF8A1E;
+      margin-bottom:6px;
+      text-transform:uppercase;
+  ">
+    {display_name}
+  </div>
 
+  <!-- Divider under name -->
+  <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 10px;"></div>
 
   <!-- Icon + ReadiScore -->
   <div style="display:flex;align-items:center;margin:4px 0 10px;">
     <div style="
-        width:64px;
-        height:64px;
+        width:72px;
+        height:72px;
         display:flex;
         align-items:center;
         justify-content:center;
         margin-right:12px;
     ">
-  <img src="data:image/png;base64,{WORKER_ICON}" style="width:48px;height:48px;" />
-</div>
+      <img src="data:image/png;base64,{WORKER_ICON}" style="width:60px;height:60px;" />
+    </div>
     <div>
-      <div style="font-size:0.9rem;font-weight:600;opacity:0.9;color:#FF8A1E;">ReadiScore</div>
-      <div style="font-size:2.0rem;font-weight:900;line-heigh:1.1;color:#FF8A1E;">
+      <div style="font-size:2.1rem;font-weight:900;line-height:1.1;color:#FF8A1E;">
         {int(r["readiscore"]*100)}%
+      </div>
+      <div style="font-size:0.9rem;font-weight:600;opacity:0.95;">
+        ReadiScore
       </div>
     </div>
   </div>
@@ -1003,12 +1007,14 @@ for b in BUCKET_ORDER:
   <div style="font-size:0.9rem;margin-top:4px;opacity:0.95;">
     Ideal Fit: {r.get("role_title","")}
   </div>
-  
-  <!-- Divider line -->
-  <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 8px;"></div>
-  
+
   <!-- Highlights -->
-  <div style="font-size:0.85rem;margin-top:10px;font-weight:700;#FF8A1E;">
+  <div style="
+      font-size:0.9rem;
+      margin-top:10px;
+      font-weight:700;
+      color:#FF8A1E;
+  ">
     Highlights
   </div>
   <div style="font-size:0.8rem;margin-top:2px;opacity:0.95;">
@@ -1018,7 +1024,6 @@ for b in BUCKET_ORDER:
 """,
                 unsafe_allow_html=True,
             )
-
 
 
 # ---------------------------------------------------------------------------
