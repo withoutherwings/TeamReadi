@@ -898,66 +898,91 @@ for b in BUCKET_ORDER:
     st.subheader(bucket_labels[b])
     cols = st.columns(4)
 
-    for i, r in enumerate(group):
-        col = cols[i % 4]
-        with col:
             display_name = r.get("display_name") or format_employee_label(r["emp_id"])
-            hl = r.get("highlights", [])
-            lines = []
-            for h in hl:
-                status = h.get("status")
-                if status == "yes":
-                    icon = "✅"
-                elif status == "maybe":
-                    icon = "⚠️"
-                else:
-                    icon = "❌"
-                lines.append(f"{icon} {h.get('skill','')}")
-            # Turn the lines into simple HTML with line breaks
-            if lines:
-                highlights_html = "<br>".join(lines)
-            else:
-                highlights_html = "No project-specific highlights identified yet."
 
-            st.markdown(
-                f"""
+        # Build highlight lines with ✓ / ⚠ / ✗
+        hl = r.get("highlights", [])
+        lines = []
+        for h in hl:
+            status = h.get("status")
+            if status == "yes":
+                icon = "✅"
+            elif status == "maybe":
+                icon = "⚠️"
+            else:
+                icon = "❌"
+            lines.append(f"{icon} {h.get('skill','')}")
+        highlights_html = "<br>".join(lines) if lines else "No specific highlights identified yet."
+
+        st.markdown(
+            f"""
 <div style="
   background-color:#041E3A;
-  border-radius:18px;
-  padding:18px 20px;
+  border-radius:22px;
+  padding:16px 18px 14px;
   margin-bottom:18px;
   box-shadow:0 8px 16px rgba(0,0,0,0.25);
   color:white;
-  min-height:240px;
-  width:100%;
-  text-align:center;
+  width:260px;
+  min-height:280px;
+  margin-left:auto;
+  margin-right:auto;
+  display:flex;
+  flex-direction:column;
 ">
-  <div style="font-size:1.4rem;font-weight:800;color:#FF8A1E;">
+  <!-- Name -->
+  <div style="font-size:1.1rem;font-weight:800;color:#FF8A1E;margin-bottom:4px;">
     {display_name}
   </div>
 
-  <!-- WORKER ICON -->
-  <div style="display:flex; align-items:center; justify-content:center; margin-top:6px; margin-bottom:10px;">
-      <div style="
-          width:78px;
-          height:78px;
-          border-radius:50%;
-          background-color:#FF8A1E;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-      ">
-          <img src="data:image/png;base64,{WORKER_ICON}" style="width:48px; height:48px;" />
+  <!-- Icon + ReadiScore -->
+  <div style="display:flex;align-items:center;margin:4px 0 10px;">
+    <div style="
+        width:64px;
+        height:64px;
+        border-radius:50%;
+        background-color:#FF8A1E;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        margin-right:12px;
+    ">
+      <img src="data:image/png;base64,{WORKER_ICON}" style="width:40px;height:40px;" />
+    </div>
+    <div>
+      <div style="font-size:0.9rem;font-weight:600;opacity:0.9;">ReadiScore</div>
+      <div style="font-size:2.0rem;font-weight:900;line-height:1.1;">
+        {int(r["readiscore"]*100)}%
       </div>
+    </div>
   </div>
 
-  <div style="font-size:2rem; font-weight:900; margin-top:-4px; margin-bottom:8px;">
-      {int(r["readiscore"]*100)}%
+  <!-- Divider line -->
+  <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 8px;"></div>
+
+  <!-- Skill & availability -->
+  <div style="font-size:0.9rem;opacity:0.95;">
+    Skill Match: {int(r["skillfit"]*100)}%<br>
+    Total Time Available: {r["hours"]} hrs
   </div>
 
+  <!-- Role -->
+  <div style="font-size:0.9rem;margin-top:4px;opacity:0.95;">
+    Ideal Fit: {r.get("role_title","")}
+  </div>
+
+  <!-- Highlights -->
+  <div style="font-size:0.85rem;margin-top:10px;font-weight:700;">
+    Highlights
+  </div>
+  <div style="font-size:0.8rem;margin-top:2px;opacity:0.95;">
+    {highlights_html}
+  </div>
+</div>
 """,
-                unsafe_allow_html=True,
-            )
+            unsafe_allow_html=True,
+        )
+
 
 # ---------------------------------------------------------------------------
 # PDF + bottom buttons
