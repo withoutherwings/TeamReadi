@@ -404,8 +404,11 @@ def build_highlights_from_profiles(
 
 
 # ---------------------------------------------------------------------------
-# PDF report (clean v16-style layout + project name byline)
+# PDF report (clean layout + wrapped project title)
 # ---------------------------------------------------------------------------
+
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
 
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     buf = io.BytesIO()
@@ -415,46 +418,48 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     project_name = params.get("project_name") or ""
 
     def header():
-    # Title with optional project byline
-    title = "ReadiReport"
-    if project_name:
-        title = f"ReadiReport: {project_name}"
+        # Title with optional project byline
+        title = "ReadiReport"
+        if project_name:
+            title = f"ReadiReport: {project_name}"
 
-    c.setFont("Helvetica-Bold", 18)
-    max_width = 470  # printable width before it runs off the page
-    y_title = h - 72
+        c.setFont("Helvetica-Bold", 18)
+        max_width = 470  # printable width before it runs off the page
+        y_title = h - 72
 
-    # Split long titles across multiple lines
-    words = title.split()
-    line = []
-    for w in words:
-        if c.stringWidth(" ".join(line + [w]), "Helvetica-Bold", 18) <= max_width:
-            line.append(w)
-        else:
+        # Split long titles across multiple lines
+        words = title.split()
+        line: List[str] = []
+        for w_ in words:
+            test_line = " ".join(line + [w_])
+            if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
+                line.append(w_)
+            else:
+                c.drawString(72, y_title, " ".join(line))
+                y_title -= 22
+                line = [w_]
+
+        # Draw last line
+        if line:
             c.drawString(72, y_title, " ".join(line))
-            y_title -= 22
-            line = [w]
 
-    # draw last line
-    if line:
-        c.drawString(72, y_title, " ".join(line))
+        # Continue header below wrapped title
+        y0 = y_title - 18
 
-    y0 = y_title - 18  # continue the header below wrapped title
-
-    c.setFont("Helvetica", 10)
-    y0 -= 14
-    c.drawString(
-        72,
-        y0,
-        f"Window: {params.get('start_date')} to {params.get('end_date')}",
-    )
-    y0 -= 14
-    c.drawString(
-        72,
-        y0,
-        f"Workdays: {', '.join(params.get('workdays', []))}   Max hrs/day: {params.get('max_hours')}",
-    )
-
+        c.setFont("Helvetica", 10)
+        y0 -= 14
+        c.drawString(
+            72,
+            y0,
+            f"Window: {params.get('start_date')} to {params.get('end_date')}",
+        )
+        y0 -= 14
+        c.drawString(
+            72,
+            y0,
+            f"Workdays: {', '.join(params.get('workdays', []))}   "
+            f"Max hrs/day: {params.get('max_hours')}",
+        )
 
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
@@ -469,9 +474,9 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             lines.append(" ".join(line))
         return lines
 
-    # ---- Page 1: project summary + role mix (v16 style) ----
+    # ---- Page 1: project summary + role mix ----
     header()
-    y = h - 130
+    y = h - 180  # a bit lower to account for wrapped titles
 
     # Optional project window (once, in the summary)
     project_window = (params.get("project_window") or "").strip()
@@ -490,6 +495,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             y -= 14
         y -= 10
 
+    # Project summary (already includes company-level context in P2)
     proj_summary = (params.get("project_summary") or "").strip()
     if proj_summary:
         c.setFont("Helvetica-Bold", 12)
@@ -514,27 +520,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         y -= 10
 
-    # Company-level requirements
-    company_reqs = params.get("company_requirements") or []
-    if company_reqs:
-        if y < 110:
-            c.showPage()
-            header()
-            y = h - 130
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(72, y, "Company-level requirements / certifications:")
-        y -= 16
-        c.setFont("Helvetica", 10)
-        for req in company_reqs:
-            for line in wrap_text(f"• {req}", 92):
-                if y < 80:
-                    c.showPage()
-                    header()
-                    y = h - 130
-                    c.setFont("Helvetica", 10)
-                c.drawString(72, y, line)
-                y -= 14
-        y -= 10
+    # NOTE: company_requirements block removed on purpose –
+    # they are already baked into the narrative summary above.
 
     # Role mix
     role_mix = params.get("role_mix") or {}
@@ -603,7 +590,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         # Strengths
         c.setFont("Helvetica-Bold", 11)
-        c.drawString(72, y, "Best-aligned project strengths:")
+        c.drawString(72, y, "Strengths:")
         y -= 16
         c.setFont("Helvetica", 10)
         if strengths:
@@ -627,7 +614,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         # Gaps
         c.setFont("Helvetica-Bold", 11)
-        c.drawString(72, y, "Gaps / risks vs must-have skills:")
+        c.drawString(72, y, "Gaps:")
         y -= 16
         c.setFont("Helvetica", 10)
         if gaps:
@@ -710,7 +697,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.showPage()
 
     c.save()
-    return buf.getvalue()
+    return buf.getValue()
+
 
 
 # ---------------------------------------------------------------------------
