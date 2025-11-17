@@ -333,27 +333,50 @@ def build_highlights_from_profiles(
 ) -> List[Dict[str, Any]]:
     """
     Build a small list of highlights for the tiles.
+
+    Uses the candidate_profile buckets:
+      - matched_must_have_skills  -> status="yes"  (✅)
+      - partial_must_have_skills  -> status="maybe" (⚠️)
+      - missing_must_have_skills  -> status="no"   (✗)
+
+    Falls back to simple overlap if those lists are missing.
     """
-    matched_raw = candidate_profile.get("matched_must_have_skills")
-    missing_raw = candidate_profile.get("missing_must_have_skills")
+    matched = [
+        str(s).strip()
+        for s in candidate_profile.get("matched_must_have_skills") or []
+        if str(s).strip()
+    ]
+    partial = [
+        str(s).strip()
+        for s in candidate_profile.get("partial_must_have_skills") or []
+        if str(s).strip()
+    ]
+    missing = [
+        str(s).strip()
+        for s in candidate_profile.get("missing_must_have_skills") or []
+        if str(s).strip()
+    ]
 
-    if matched_raw is not None or missing_raw is not None:
-        highlights: List[Dict[str, Any]] = []
-        matched_clean = [str(s).strip() for s in (matched_raw or []) if str(s).strip()]
-        missing_clean = [str(s).strip() for s in (missing_raw or []) if str(s).strip()]
+    highlights: List[Dict[str, Any]] = []
 
-        for label in matched_clean:
+    # Prefer the explicit buckets if we have any signal
+    if matched or partial or missing:
+        for label in matched:
             if len(highlights) >= max_items:
                 break
-            highlights.append({"skill": label, "met": True})
-        for label in missing_clean:
+            highlights.append({"skill": label, "status": "yes", "met": True})
+        for label in partial:
             if len(highlights) >= max_items:
                 break
-            highlights.append({"skill": label, "met": False})
-
+            highlights.append({"skill": label, "status": "maybe", "met": False})
+        for label in missing:
+            if len(highlights) >= max_items:
+                break
+            highlights.append({"skill": label, "status": "no", "met": False})
         if highlights:
             return highlights
 
+    # Fallback: simple overlap between project must-haves and candidate_skills
     proj_must = [
         str(x).strip()
         for x in project_profile.get("must_have_skills", [])
@@ -367,10 +390,15 @@ def build_highlights_from_profiles(
     ]
     cand_set = set(cand_skills)
 
-    highlights: List[Dict[str, Any]] = []
     for label in proj_must:
         met = label.lower() in cand_set
-        highlights.append({"skill": label, "met": met})
+        highlights.append(
+            {
+                "skill": label,
+                "status": "yes" if met else "no",
+                "met": met,
+            }
+        )
 
     return highlights
 
@@ -635,7 +663,13 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             y -= 14
 
         # Overall recommendation
-        fit = (profile.get("candidate_summary") or r.get("project_fit_summary") or "").strip()
+        fit = (
+            profile.get("project_fit_summary")
+            or profile.get("candidate_background_summary")
+            or r.get("project_fit_summary")
+            or ""
+        ).strip()
+
         if fit:
             y -= 8
             if y < 100:
@@ -852,9 +886,14 @@ for b in BUCKET_ORDER:
             hl = r.get("highlights", [])
             lines = []
             for h in hl:
-                icon = "✓" if h.get("met") else "✗"
+                status = h.get("status")
+                if status == "yes":
+                    icon = "✓"
+                elif status == "maybe":
+                    icon = "⚠️"
+                else:
+                    icon = "✗"
                 lines.append(f"{icon} {h.get('skill','')}")
-            highlights_html = "<br>".join(lines) if lines else "No key requirements clearly met yet."
 
             st.markdown(
                 f"""
