@@ -6,6 +6,19 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 
 import streamlit as st
 import fitz                    # PyMuPDF
+import base64
+import pathlib
+
+# Path to the repo root
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+def load_base64(rel_path: str) -> str:
+    file_path = ROOT / rel_path
+    with open(file_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+WORKER_ICON = load_base64("assets/worker_icon.png")
+
 from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
@@ -915,28 +928,33 @@ for b in BUCKET_ORDER:
   margin-bottom:18px;
   box-shadow:0 8px 16px rgba(0,0,0,0.25);
   color:white;
-  min-height:170px;
+  min-height:240px;
+  width:100%;
+  text-align:center;
 ">
   <div style="font-size:1.4rem;font-weight:800;color:#FF8A1E;">
     {display_name}
   </div>
-  <div style="font-size:1.4rem;font-weight:800;margin:2px 0 4px;">
-    ReadiScore: {int(r["readiscore"]*100)}%
+
+  <!-- WORKER ICON -->
+  <div style="display:flex; align-items:center; justify-content:center; margin-top:6px; margin-bottom:10px;">
+      <div style="
+          width:78px;
+          height:78px;
+          border-radius:50%;
+          background-color:#FF8A1E;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+      ">
+          <img src="data:image/png;base64,{WORKER_ICON}" style="width:48px; height:48px;" />
+      </div>
   </div>
-  <div style="font-size:0.9rem;opacity:0.95;">
-    Skill match: {int(r["skillfit"]*100)}% &nbsp;|&nbsp;
-    Available: {r["hours"]} hrs
+
+  <div style="font-size:2rem; font-weight:900; margin-top:-4px; margin-bottom:8px;">
+      {int(r["readiscore"]*100)}%
   </div>
-  <div style="font-size:0.9rem;margin-top:2px;opacity:0.95;">
-    Ideal Fit: {r.get("role_title","")}
-  </div>
-  <div style="font-size:0.85rem;margin-top:8px;font-weight:700;">
-    Highlights
-  </div>
-  <div style="font-size:0.8rem;margin-top:2px;opacity:0.95;">
-    {highlights_html}
-  </div>
-</div>
+
 """,
                 unsafe_allow_html=True,
             )
