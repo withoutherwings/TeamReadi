@@ -925,18 +925,8 @@ st.download_button(
 
 # ---- Return to Start ----
 if st.button("Return to Start"):
-    # Clear all session values
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
-
-    # Set flag to trigger redirect on next render
-    st.session_state["__force_home__"] = True
-    st.rerun()
-
-# After rerun, handle forced redirect
-if st.session_state.get("__force_home__", False):
-    st.session_state.clear()
     st.markdown(
-        '<script>window.location.href="https://teamreadi.streamlit.app";</script>',
-        unsafe_allow_html=True,
+        """<script>window.location.href='https://teamreadi.streamlit.app/';</script>""",
+        unsafe_allow_html=True
     )
+
