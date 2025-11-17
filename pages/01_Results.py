@@ -877,8 +877,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     return results, project_profile, window_baseline, project_name
 
 
-
-
 # ---------------------------------------------------------------------------
 # Render results (bucketed tiles)
 # ---------------------------------------------------------------------------
@@ -943,21 +941,19 @@ for b in BUCKET_ORDER:
 
             st.markdown(
                 f"""
-st.markdown(
-    f"""
 <div class="teamreadi-card" style="
-       background-color:#082A4C;
-       border-radius:22px;
-       padding:16px 18px 14px;
-       margin-bottom:18px;
-       box-shadow:0 8px 16px rgba(0,0,0,0.25);
-       color:white;
-       width:260px;
-       min-height:280px;
-       margin-left:auto;
-       margin-right:auto;
-       display:flex;
-       flex-direction:column;
+  background-color:#082A4C;
+  border-radius:22px;
+  padding:16px 18px 14px;
+  margin-bottom:18px;
+  box-shadow:0 8px 16px rgba(0,0,0,0.25);
+  color:white;
+  width:260px;
+  min-height:280px;
+  margin-left:auto;
+  margin-right:auto;
+  display:flex;
+  flex-direction:column;
 ">
   <!-- Name -->
   <div style="
@@ -974,17 +970,16 @@ st.markdown(
   <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 10px;"></div>
 
   <!-- Icon + ReadiScore -->
-  <div style="display:flex;align-items:center;margin:6px 0 12px;">
+  <div style="display:flex;align-items:center;margin:4px 0 10px;">
     <div style="
-        width:120px;
-        height:120px;
+        width:110px;
+        height:110px;
         display:flex;
         align-items:center;
         justify-content:center;
-        margin-right:16px;
+        margin-right:14px;
     ">
-      <img src="data:image/png;base64,{WORKER_ICON}"
-           style="width:110px;height:110px;" />
+      <img src="data:image/png;base64,{WORKER_ICON}" style="width:100px;height:100px;" />
     </div>
 
     <div>
@@ -1025,9 +1020,8 @@ st.markdown(
   </div>
 </div>
 """,
-    unsafe_allow_html=True,
-)
-
+                unsafe_allow_html=True,
+            )
 
 # ---------------------------------------------------------------------------
 # PDF + bottom buttons
