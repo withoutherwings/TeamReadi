@@ -350,7 +350,7 @@ def build_highlights_from_profiles(
     Uses the candidate_profile buckets:
       - matched_must_have_skills  -> status="yes"  (✅)
       - partial_must_have_skills  -> status="maybe" (⚠️)
-      - missing_must_have_skills  -> status="no"   (✗)
+      - missing_must_have_skills  -> status="no"   (❌)
 
     Falls back to simple overlap if those lists are missing.
     """
@@ -710,7 +710,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.showPage()
 
     c.save()
-    return buf.getValue()
+    return buf.getvalue()
 
 
 
@@ -898,24 +898,31 @@ for b in BUCKET_ORDER:
     st.subheader(bucket_labels[b])
     cols = st.columns(4)
 
+    for i, r in enumerate(group):
+        col = cols[i % 4]
+        with col:
             display_name = r.get("display_name") or format_employee_label(r["emp_id"])
 
-        # Build highlight lines with ✓ / ⚠ / ✗
-        hl = r.get("highlights", [])
-        lines = []
-        for h in hl:
-            status = h.get("status")
-            if status == "yes":
-                icon = "✅"
-            elif status == "maybe":
-                icon = "⚠️"
-            else:
-                icon = "❌"
-            lines.append(f"{icon} {h.get('skill','')}")
-        highlights_html = "<br>".join(lines) if lines else "No specific highlights identified yet."
+            # Build highlight lines with ✓ / ⚠ / ❌
+            hl = r.get("highlights", [])
+            lines = []
+            for h in hl:
+                status = h.get("status")
+                if status == "yes":
+                    icon = "✅"
+                elif status == "maybe":
+                    icon = "⚠️"
+                else:
+                    icon = "❌"
+                lines.append(f"{icon} {h.get('skill','')}")
+            highlights_html = (
+                "<br>".join(lines)
+                if lines
+                else "No specific highlights identified yet."
+            )
 
-        st.markdown(
-            f"""
+            st.markdown(
+                f"""
 <div style="
   background-color:#041E3A;
   border-radius:22px;
@@ -980,8 +987,9 @@ for b in BUCKET_ORDER:
   </div>
 </div>
 """,
-            unsafe_allow_html=True,
-        )
+                unsafe_allow_html=True,
+            )
+
 
 
 # ---------------------------------------------------------------------------
