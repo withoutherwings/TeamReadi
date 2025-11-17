@@ -966,13 +966,19 @@ st.download_button(
 st.write("")
 
 if st.button("Return to Start"):
-    # Clear session keys used by the app
-    for k in RESET_KEYS:
-        st.session_state.pop(k, None)
+    # Clear session state
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
 
-    try:
-        # If you're on Streamlit 1.27+ with multipage support
-        st.switch_page("streamlit_app.py")   # or "Home.py" depending on your main file name
-    except Exception:
-        # Fallback: simple query-param reset to root
-        st.experimental_set_query_params()
+    # Instant redirect BEFORE rerun so the app doesn't think
+    st.session_state["__force_home__"] = True
+    st.experimental_rerun()
+
+# Handle forced return to home
+if st.session_state.get("__force_home__", False):
+    st.session_state.clear()
+    # critical: re-route without running pipeline again
+    st.markdown(
+        '<script>window.location.href = "https://teamreadi.streamlit.app";</script>',
+        unsafe_allow_html=True,
+    )
