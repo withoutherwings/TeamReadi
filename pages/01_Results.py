@@ -36,6 +36,18 @@ from reportlab.pdfgen import canvas
 
 # Make sure page config is set once, at the top
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
+st.markdown(
+    """
+<style>
+/* tighten column gutters so tiles sit closer together */
+div[data-testid="column"] {
+  padding-left: 0.4rem !important;
+  padding-right: 0.4rem !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -938,27 +950,32 @@ for b in BUCKET_ORDER:
   flex-direction:column;
 ">
   <!-- Name -->
-  <div style="font-size:1.1rem;font-weight:800;color:#FF8A1E;margin-bottom:4px;">
-    {display_name}
-  </div>
+  <div style="
+    font-size:1.3rem;
+    font-weight:800;
+    color:#FF8A1E;
+    margin-bottom:6px;
+    text-transform:uppercase;
+">
+  {display_name}
+</div>
+
 
   <!-- Icon + ReadiScore -->
   <div style="display:flex;align-items:center;margin:4px 0 10px;">
     <div style="
         width:64px;
         height:64px;
-        border-radius:50%;
-        background-color:#FF8A1E;
         display:flex;
         align-items:center;
         justify-content:center;
         margin-right:12px;
     ">
-      <img src="data:image/png;base64,{WORKER_ICON}" style="width:40px;height:40px;" />
-    </div>
+  <img src="data:image/png;base64,{WORKER_ICON}" style="width:48px;height:48px;" />
+</div>
     <div>
       <div style="font-size:0.9rem;font-weight:600;opacity:0.9;">ReadiScore</div>
-      <div style="font-size:2.0rem;font-weight:900;line-height:1.1;">
+      <div style="font-size:2.0rem;font-weight:900;line-heigh:1.1;color:#FF8A1E;">
         {int(r["readiscore"]*100)}%
       </div>
     </div>
