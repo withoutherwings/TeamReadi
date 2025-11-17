@@ -147,7 +147,6 @@ def _llm_json(prompt: str) -> Dict[str, Any]:
         print(f"[TeamReadi] _llm_json error: {e}")
         return {}
 
-
 # ---------------------------------------------------------------------------
 # Project profile
 # ---------------------------------------------------------------------------
@@ -163,6 +162,11 @@ def build_project_profile(job_text: str) -> Dict[str, Any]:
     We intentionally keep *person-level* skill requirements separate from
     company-level business/certification requirements so that candidates
     are not penalized for SDVOSB status, FAR compliance, etc.
+
+    NEW: we ask for three clearly separated summary paragraphs:
+      - p1 = overview (what / where / why)
+      - p2 = owner / company-level constraints & requirements
+      - p3 = what the project team / key personnel will actually do
     """
     if not job_text:
         return {
@@ -185,60 +189,102 @@ RFP TEXT (truncated if very long):
 {job_text[:12000]}
 ---
 
-Extract:
+Extract the following fields:
 
 1. "project_name": a SHORT human-readable project name
    (e.g. "EHRM Outpatient Clinic Renovation – Asheville VAMC").
    If no clear name is given, synthesize a concise descriptive name.
 
-2. "project_summary": 2–3 paragraphs describing:
-   - overall scope and purpose,
-   - key technical elements / systems,
-   - any major constraints that matter when assigning people.
+2. "project_summary_p1": one paragraph giving a high-level overview:
+   - what the project is,
+   - where it is located,
+   - the primary purpose or goal of the work,
+   - any key systems or disciplines (e.g. EHRM, electrical, HVAC).
 
-3. "project_window": a brief description of the expected duration / period
+3. "project_summary_p2": one paragraph focused on OWNER / COMPANY-LEVEL
+   requirements and constraints that affect who can win the work:
+   - small business or SDVOSB/8(a)/HUBZone set-asides,
+   - important FAR / VA / DoD compliance issues,
+   - bonding, insurance, or other firm-level requirements.
+   This should read like a narrative paragraph, NOT a bullet list.
+
+4. "project_summary_p3": one paragraph focused on what the PROJECT TEAM
+   and key personnel will actually be responsible for:
+   - major construction tasks and phases,
+   - coordination with the owner or facility (e.g. working in an active VAMC),
+   - any critical schedule, phasing, or access constraints.
+
+5. "project_window": a brief description of the expected duration / period
    of performance as described in the RFP
    (e.g. "Design NTP Feb 2026; substantial completion by Oct 2027").
-   If not stated, say "Not clearly stated in RFP."
+   If not stated, use "Not clearly stated in RFP."
 
-4. "project_location": city/state or facility name if given
-   (e.g. "Asheville, NC – Charles George VAMC").
+6. "project_location": city/state or facility name if given
+   (e.g. "Chicago, IL – Jesse Brown VAMC").
 
-5. "must_have_skills": an array of SHORT, PERSON-LEVEL skill or experience
+7. "must_have_skills": an array of SHORT, PERSON-LEVEL skill or experience
    requirements for individual team members.
    - DO NOT include company-level business requirements such as:
      SDVOSB / WOSB / 8(a) / HUBZone status, small-business set-asides,
      bonding capacity, insurance limits, or generic "FAR compliance".
 
-6. "nice_to_have_skills": similar array of PERSON-LEVEL nice-to-have skills.
+8. "nice_to_have_skills": similar array of PERSON-LEVEL nice-to-have skills.
    (Same rule: ignore company-level certifications and ownership status.)
 
-7. "role_mix_by_bucket": an object with integer counts estimating how many
-   people the OWNER will realistically need at peak in each of three buckets:
-     - "PM/Admin"
-     - "Support/Coordination"
-     - "Field/Operator"
-   Example: {{"PM/Admin": 1, "Support/Coordination": 1, "Field/Operator": 2}}
+9. "company_requirements": an array of SHORT items describing OWNER /
+   COMPANY-LEVEL requirements (set-asides, SDVOSB, FAR clauses, bonding,
+   VA-specific rules, etc.).
+
+10. "role_mix_by_bucket": an object with integer counts estimating how many
+    people the OWNER will realistically need at peak in each of three buckets:
+      - "PM/Admin"
+      - "Support/Coordination"
+      - "Field/Operator"
+    Example: {{"PM/Admin": 1, "Support/Coordination": 1, "Field/Operator": 2}}
 
 Return ONLY a valid JSON object with exactly these keys:
-"project_name", "project_summary", "project_window", "project_location",
-"must_have_skills", "nice_to_have_skills", "role_mix_by_bucket".
+"project_name",
+"project_summary_p1", "project_summary_p2", "project_summary_p3",
+"project_window", "project_location",
+"must_have_skills", "nice_to_have_skills",
+"company_requirements",
+"role_mix_by_bucket".
 """
 
     data = _llm_json(prompt) or {}
 
+    # ---- Person-level vs company-level skills ----
     raw_must = data.get("must_have_skills") or []
     raw_nice = data.get("nice_to_have_skills") or []
 
     must_person, must_company = _split_person_vs_company(raw_must)
     nice_person, nice_company = _split_person_vs_company(raw_nice)
 
-    # Be defensive about weird LLM shapes
-    raw_summary = data.get("project_summary", "")
-    if isinstance(raw_summary, list):
-        project_summary = " ".join(str(x) for x in raw_summary)
+    # Explicit company requirements from the JSON (may overlap with split output)
+    explicit_company = data.get("company_requirements") or []
+
+    # Clean + de-duplicate company-level requirements
+    company_reqs: list[str] = []
+    for item in list(must_company + nice_company + explicit_company):
+        s = str(item).strip()
+        if s and s not in company_reqs:
+            company_reqs.append(s)
+
+    # ---- Build final multi-paragraph summary ----
+    p1 = str(data.get("project_summary_p1") or "").strip()
+    p2 = str(data.get("project_summary_p2") or "").strip()
+    p3 = str(data.get("project_summary_p3") or "").strip()
+
+    if any([p1, p2, p3]):
+        pieces = [p for p in (p1, p2, p3) if p]
+        project_summary = "\n\n".join(pieces)
     else:
-        project_summary = str(raw_summary)
+        # Fallback if the model ignored the new keys
+        raw_summary = data.get("project_summary", "")
+        if isinstance(raw_summary, list):
+            project_summary = " ".join(str(x) for x in raw_summary)
+        else:
+            project_summary = str(raw_summary)
 
     profile: Dict[str, Any] = {
         "project_name": str(data.get("project_name") or "").strip(),
@@ -249,11 +295,10 @@ Return ONLY a valid JSON object with exactly these keys:
         "must_have_skills": must_person,
         "nice_to_have_skills": nice_person,
         # Company-level requirements kept for the project summary page:
-        "company_requirements": must_company + nice_company,
+        "company_requirements": company_reqs,
         "role_mix_by_bucket": data.get("role_mix_by_bucket") or {},
     }
     return profile
-
 
 
 # ---------------------------------------------------------------------------
