@@ -675,7 +675,6 @@ def fetch_ics_bytes(url: str) -> bytes:
     except Exception:
         return b""
 
-
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
@@ -683,6 +682,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     wd_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
     working_days: Set[int] = {wd_map[d] for d in workdays_l if d in wd_map}
 
+    # ----- Build RFP text -----
     if req_files:
         parts = [extract_text_from_upload(f) for f in req_files]
         job_text = "\n\n".join(p for p in parts if p)
@@ -691,9 +691,15 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     else:
         job_text = ""
 
+    # ----- LLM project profile (this already includes a project_name) -----
     project_profile = build_project_profile(job_text)
-    project_name = infer_project_name_from_inputs(req_files, req_url, job_text)
 
+    # Use LLM-derived project_title first; fall back to old heuristic ONLY if empty
+    project_name = project_profile.get("project_name") or infer_project_name_from_inputs(
+        req_files, req_url, job_text
+    )
+
+    # ----- Calendar source(s) -----
     calendars = []
     if cal_method == "Calendar link" and cal_link:
         b = fetch_ics_bytes(cal_link)
@@ -707,9 +713,14 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
                 }
             )
 
+    # Window capacity in hours (used for availability % and Readiscore)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
     def availability_for_employee(tags: List[str]) -> int:
+        """
+        Compute remaining hours for one employee over the window.
+        If no calendar is configured, assume fully available.
+        """
         if not calendars:
             return window_baseline
         cal_bytes = calendars[0]["_bytes"]
@@ -722,6 +733,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             max_hours,
         )
 
+    # ----- Build candidate profiles -----
     candidates: List[Dict[str, Any]] = []
     for up in resumes_raw:
         stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
@@ -731,6 +743,8 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
         calendar_tags = build_employee_calendar_tags(display_name, stem)
 
         cand_profile = build_candidate_profile(text, project_profile)
+
+        # Try to use LLM-computed percentage; fall back to simple overlap
         skill_match_pct = cand_profile.get("skill_match_percent")
         if skill_match_pct is None:
             skill_match_pct = compute_skill_match(
@@ -757,6 +771,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             }
         )
 
+    # ----- Compute Readiscore + highlights -----
     results: List[Dict[str, Any]] = []
     for c in candidates:
         avail = availability_for_employee(c.get("calendar_tags", []))
@@ -787,6 +802,8 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
         )
 
     return results, project_profile, window_baseline, project_name
+
+
 
 
 # ---------------------------------------------------------------------------
