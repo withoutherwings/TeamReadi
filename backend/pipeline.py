@@ -4,45 +4,66 @@ LLM-powered helpers:
 
 - build_project_profile(project_text)
 - build_candidate_profile(resume_text, project_profile)
-- compute_skill_match(project_must_have, candidate_skills)
+- compute_skill_match(must_have_skills, candidate_skills, matched_must_have_skills=None)
 """
 
 import os
 import json
-from typing import Dict, List, Any, Set
+from typing import Dict, List, Any, Set, Optional
 
 from openai import OpenAI
 
-USE_LLM = True  # <-- flip to True only when you want real runs
-
-def _llm_json(prompt: str) -> dict:
-    """
-    Call OpenAI to get structured JSON. When USE_LLM is False,
-    return a cheap stub so we don't burn tokens while debugging.
-    """
-    if not USE_LLM:
-        # Minimal stub so the rest of the code doesn't crash
-        return {
-            "project_summary": "",
-            "must_have_skills": [],
-            "nice_to_have_skills": [],
-            "role_mix_by_bucket": {
-                "PM/Admin": 1,
-                "Support/Coordination": 1,
-                "Field/Operator": 1,
-            },
-        }
-
 # ---------------------------------------------------------------------------
-# OpenAI client
+# Global config
 # ---------------------------------------------------------------------------
+
+USE_LLM = True  # flip to False if you want to disable live LLM calls
 
 API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 
-client = OpenAI(api_key=API_KEY)
+client = OpenAI(api_key=API_KEY) if API_KEY else None
 
-# ---- Heuristics to separate company-level vs person-level requirements ----
+
+def _llm_json(prompt: str) -> Dict[str, Any]:
+    """
+    Call the chat model and parse JSON from the response.
+
+    If USE_LLM is False or the client is missing, return {} so callers can
+    fall back to safe defaults.
+    """
+    if (not USE_LLM) or (client is None):
+        return {}
+
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.15,
+        )
+        text = resp.choices[0].message.content.strip()
+
+        # Strip possible markdown code fences
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].lstrip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines)
+
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    except Exception as e:
+        print(f"[TeamReadi] _llm_json error: {e}")
+        return {}
+
+# ---------------------------------------------------------------------------
+# Heuristics: company-level vs person-level requirements
+# ---------------------------------------------------------------------------
 
 COMPANY_LEVEL_KEYWORDS = [
     "sdvosb",
@@ -88,82 +109,19 @@ def _split_person_vs_company(requirements) -> tuple[list[str], list[str]]:
             person.append(s)
     return person, company
 
-
-# ---------------------------------------------------------------------------
-# Simple helpers
-# ---------------------------------------------------------------------------
-
-def _normalize_phrase_list(items: List[str]) -> Set[str]:
-    return {str(x).strip().lower() for x in (items or []) if str(x).strip()}
-
-
-def compute_skill_match(project_must_have: List[str], candidate_skills: List[str]) -> float:
-    """Fallback overlap-based score, 0–100."""
-    proj_set = _normalize_phrase_list(project_must_have)
-    cand_set = _normalize_phrase_list(candidate_skills)
-    if not proj_set:
-        return 0.0
-    overlap = proj_set & cand_set
-    pct = 100.0 * len(overlap) / len(proj_set)
-    return round(pct, 1)
-
-
-# ---------------------------------------------------------------------------
-# LLM calls
-# ---------------------------------------------------------------------------
-
-def _llm_json(prompt: str) -> Dict[str, Any]:
-    """
-    Call the chat model and *attempt* to parse JSON from the response.
-
-    We tell the model to return JSON only. If parsing fails, we fall back
-    to an empty dict and let callers handle defaults.
-    """
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.15,
-        )
-        text = resp.choices[0].message.content.strip()
-
-        # Strip possible markdown code fences
-        if text.startswith("```"):
-            text = text.strip()
-            lines = text.splitlines()
-            if len(lines) >= 2:
-                if lines[0].lstrip().startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                text = "\n".join(lines)
-
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            return {}
-        return data
-
-    except Exception as e:
-        print(f"[TeamReadi] _llm_json error: {e}")
-        return {}
-
 # ---------------------------------------------------------------------------
 # Project profile
 # ---------------------------------------------------------------------------
 
-from typing import Dict, Any  # make sure this import exists at top
-
-
 def build_project_profile(job_text: str) -> Dict[str, Any]:
     """
-    Use the LLM (or a stub when USE_LLM is False) to summarize the RFP and
-    extract structured fields for the rest of the pipeline.
+    Use the LLM to summarize the RFP and extract structured fields.
 
     We intentionally keep *person-level* skill requirements separate from
     company-level business/certification requirements so that candidates
     are not penalized for SDVOSB status, FAR compliance, etc.
 
-    NEW: we ask for three clearly separated summary paragraphs:
+    We also ask for three summary paragraphs:
       - p1 = overview (what / where / why)
       - p2 = owner / company-level constraints & requirements
       - p3 = what the project team / key personnel will actually do
@@ -253,24 +211,23 @@ Return ONLY a valid JSON object with exactly these keys:
 
     data = _llm_json(prompt) or {}
 
-    # ---- Person-level vs company-level skills ----
+    # Person-level vs company-level skills
     raw_must = data.get("must_have_skills") or []
     raw_nice = data.get("nice_to_have_skills") or []
 
     must_person, must_company = _split_person_vs_company(raw_must)
     nice_person, nice_company = _split_person_vs_company(raw_nice)
 
-    # Explicit company requirements from the JSON (may overlap with split output)
     explicit_company = data.get("company_requirements") or []
 
     # Clean + de-duplicate company-level requirements
-    company_reqs: list[str] = []
+    company_reqs: List[str] = []
     for item in list(must_company + nice_company + explicit_company):
         s = str(item).strip()
         if s and s not in company_reqs:
             company_reqs.append(s)
 
-    # ---- Build final multi-paragraph summary ----
+    # Build final multi-paragraph summary
     p1 = str(data.get("project_summary_p1") or "").strip()
     p2 = str(data.get("project_summary_p2") or "").strip()
     p3 = str(data.get("project_summary_p3") or "").strip()
@@ -279,7 +236,6 @@ Return ONLY a valid JSON object with exactly these keys:
         pieces = [p for p in (p1, p2, p3) if p]
         project_summary = "\n\n".join(pieces)
     else:
-        # Fallback if the model ignored the new keys
         raw_summary = data.get("project_summary", "")
         if isinstance(raw_summary, list):
             project_summary = " ".join(str(x) for x in raw_summary)
@@ -291,21 +247,107 @@ Return ONLY a valid JSON object with exactly these keys:
         "project_summary": project_summary.strip(),
         "project_window": str(data.get("project_window") or "").strip(),
         "project_location": str(data.get("project_location") or "").strip(),
-        # Only person-level items feed into skill matching and highlights:
+        # Only person-level items feed into skill matching and highlights
         "must_have_skills": must_person,
         "nice_to_have_skills": nice_person,
-        # Company-level requirements kept for the project summary page:
+        # Company-level requirements kept for the project summary page
         "company_requirements": company_reqs,
         "role_mix_by_bucket": data.get("role_mix_by_bucket") or {},
     }
     return profile
 
-
 # ---------------------------------------------------------------------------
-# Candidate profile (uses project_summary P3 to align skills)
+# Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
-from typing import Dict, Any
+def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
+    """
+    FIRST STAGE: look ONLY at the resume and pull out a grounded skill list.
+
+    - No project/RFP context is shown here.
+    - The model is explicitly told NOT to invent skills that are not clearly stated.
+    """
+    if not resume_text or not resume_text.strip():
+        return {"candidate_summary": "", "raw_skills": []}
+
+    prompt = f"""
+You are reading ONE anonymous construction/engineering RESUME.
+
+Your job is to stay 100% grounded in the resume and extract only the skills
+and experiences that are clearly supported by the text. DO NOT guess or infer
+skills that are not mentioned.
+
+RESUME TEXT:
+---
+{resume_text[:12000]}
+---
+
+Return a JSON object with:
+
+1. "candidate_summary": 2–3 sentences summarizing the person's background
+   and strengths for construction / infrastructure work. Mention sectors
+   (healthcare, transportation, etc.) and typical scope, but do NOT mention
+   any specific RFP or project from outside this resume.
+
+2. "raw_skills": a list of SHORT skill/experience phrases (5–12 words each).
+   Each item MUST be directly supported by the resume text.
+
+Rules for "raw_skills":
+- If the resume does NOT say "EHRM", "EHR", "electronic health record(s)",
+  or similar phrasing, you MUST NOT claim that as a skill.
+- Do NOT infer ownership status (SDVOSB, WOSB, 8(a), HUBZone, etc.).
+- Do NOT invent experience with specific DOTs, agencies, or hospitals unless
+  those names appear in the resume.
+- Do NOT include generic legal/contract trivia like
+  "experience handling liquidated damages" or "knowledge of North Carolina
+  state construction regulations" unless those phrases (or very close wording)
+  appear explicitly in the resume.
+
+Return ONLY a JSON object with keys:
+  "candidate_summary": string
+  "raw_skills": [string, ...]
+"""
+
+    data = _llm_json(prompt) or {}
+    summary = str(data.get("candidate_summary") or "").strip()
+    skills = [
+        str(s).strip()
+        for s in data.get("raw_skills") or []
+        if str(s).strip()
+    ]
+    return {"candidate_summary": summary, "raw_skills": skills}
+
+
+def compute_skill_match(
+    must_have_skills: List[str],
+    candidate_skills: List[str],
+    matched_must_have_skills: Optional[List[str]] = None,
+) -> float:
+    """
+    Compute a conservative skill-match percentage (0–100).
+
+    Primary logic:
+      - We only score against project *must-have* skills.
+      - If we have an explicit matched_must_have_skills list, we trust that
+        and use it directly.
+      - Otherwise we fall back to simple phrase overlap.
+    """
+    must = [s.strip().lower() for s in must_have_skills if s and s.strip()]
+    if not must:
+        return 0.0
+
+    if matched_must_have_skills is not None:
+        matched_norm = {
+            s.strip().lower() for s in matched_must_have_skills if s and s.strip()
+        }
+        hits = sum(1 for m in must if m in matched_norm)
+    else:
+        cand_norm = {
+            s.strip().lower() for s in candidate_skills if s and s.strip()
+        }
+        hits = sum(1 for m in must if m in cand_norm)
+
+    return 100.0 * float(hits) / float(len(must))
 
 
 def build_candidate_profile(
@@ -313,120 +355,107 @@ def build_candidate_profile(
     project_profile: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Analyze a single candidate resume against the project profile.
+    SECOND STAGE: compare resume skills to the project profile.
 
-    Uses:
-      - project_summary P3 (team responsibilities) as the "what this team does"
-      - must_have_skills from the project_profile
-    to classify which must-have skills are met vs missing and to compute a
-    skill_match_percent that stays consistent with the matched/missing lists.
+    Pipeline:
+      1) Call extract_resume_skills() to get a grounded list of skills.
+      2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
+      3) Ask it to decide which project must-haves are met vs missing, and to
+         write strengths/gaps WITHOUT inventing new skills.
     """
+    base = extract_resume_skills(resume_text)
+    candidate_summary = base["candidate_summary"]
+    raw_skills = base["raw_skills"]
 
-    resume_text = resume_text or ""
-
-    # Project "must-have" skills list
-    proj_must = [
-        str(s).strip()
-        for s in project_profile.get("must_have_skills", [])
-        if str(s).strip()
-    ]
-
-    # Pull the "team responsibilities" paragraph = last paragraph of summary
-    summary = project_profile.get("project_summary", "") or ""
-    paras = [p.strip() for p in summary.split("\n\n") if p.strip()]
-    team_resp = paras[-1] if paras else summary
+    must = project_profile.get("must_have_skills") or []
+    nice = project_profile.get("nice_to_have_skills") or []
 
     prompt = f"""
-You are evaluating a construction candidate resume against a specific project.
+You are aligning ONE candidate's resume skills to ONE construction project.
 
-PROJECT TEAM RESPONSIBILITIES (from RFP summary, P3):
----
-{team_resp}
----
+PROJECT REQUIREMENTS (from the RFP):
+- Must-have skills (individual person-level, not company status):
+{json.dumps(must, indent=2, ensure_ascii=False)}
+- Nice-to-have skills (individual person-level):
+{json.dumps(nice, indent=2, ensure_ascii=False)}
 
-PROJECT MUST-HAVE SKILLS (person-level, not company ownership):
-- """ + "\n- ".join(proj_must or ["<none explicitly listed>"]) + """
+CANDIDATE SKILLS (derived directly from the resume and MUST NOT be changed):
+{json.dumps(raw_skills, indent=2, ensure_ascii=False)}
 
-RESUME TEXT:
----
-{resume_text[:9000]}
----
+Your tasks:
 
-1. Read the project responsibilities and must-have skills carefully.
-2. Read the resume and infer the candidate's key skills and experiences.
+1. Decide which project must-have skills are clearly supported by the
+   candidate skills. Treat a must-have as "matched" only if there is a direct
+   or very close semantic match in CANDIDATE SKILLS.
 
-Return ONLY a JSON object with these keys:
+2. Build two lists:
+   - "matched_must_have_skills": project must-have phrases that ARE supported.
+   - "missing_must_have_skills": project must-have phrases that are NOT clearly
+     supported.
 
-- "candidate_skills": an array of SHORT skill phrases derived from the resume
-  (e.g. "healthcare CM at VA facilities", "EHRM infrastructure upgrades").
-- "matched_must_have_skills": array of must-have skills (from the project list)
-  that this candidate clearly demonstrates.
-- "missing_must_have_skills": array of must-have skills from the project list
-  that are clearly NOT demonstrated in the resume.
-- "strengths": 3–6 bullet-style phrases describing this candidate's best
-  alignment with the project (focus on project-relevant experience).
-- "gaps": 3–6 bullet-style phrases describing the main concerns / gaps vs the
-  project requirements.
-- "candidate_summary": a 2–3 sentence paragraph describing how well this
-  candidate fits the project and what role they are best suited for.
-- "skill_match_percent": an integer from 0 to 100 representing how well the
-  candidate meets the must-have skills OVERALL. Rough guideline:
-    * 90–100: nearly all must-haves clearly met
-    * 70–89: most must-haves met, a few minor gaps
-    * 40–69: mixed; several important gaps
-    * 10–39: weak fit; only a few must-haves met
-    * 0–9: almost no relevant must-haves met
+3. Write:
+   - "strengths": 3–6 short bullet phrases (max ~15 words each) describing
+     this candidate's BEST strengths for THIS project.
+   - "gaps": 3–6 short bullet phrases describing the most important weaknesses
+     or missing requirements vs THIS project.
 
-Return ONLY JSON. Do not include any explanation outside the JSON.
+Important rules:
+- You MAY NOT invent new candidate skills that are not in CANDIDATE SKILLS.
+- You MAY NOT upgrade generic healthcare or transportation experience into
+  highly specific systems (e.g. "extensive EHRM experience") unless that
+  system is explicitly mentioned in CANDIDATE SKILLS.
+- Focus "gaps" on meaningful person-level skills and experience patterns
+  (e.g. no large healthcare projects, limited PM responsibility).
+- Avoid trivia and ultra-specific legal/contract points as gaps, such as:
+    * liquidated damages clauses
+    * knowledge of a particular state's procurement laws or regulations
+    * having worked at the exact named facility
+  unless those are spelled out as strict must-haves AND clearly absent.
+
+Return ONLY a JSON object with keys:
+  "matched_must_have_skills"
+  "missing_must_have_skills"
+  "strengths"
+  "gaps"
 """
 
     data = _llm_json(prompt) or {}
 
-    # ---- Normalize arrays ----
-    def _as_str_list(x) -> list[str]:
-        if isinstance(x, str):
-            return [x.strip()] if x.strip() else []
-        if isinstance(x, (list, tuple, set)):
-            out = []
-            for item in x:
-                s = str(item).strip()
-                if s:
-                    out.append(s)
-            return out
-        return []
+    matched = [
+        str(s).strip()
+        for s in data.get("matched_must_have_skills") or []
+        if str(s).strip()
+    ]
+    missing = [
+        str(s).strip()
+        for s in data.get("missing_must_have_skills") or []
+        if str(s).strip()
+    ]
+    strengths = [
+        str(s).strip()
+        for s in data.get("strengths") or []
+        if str(s).strip()
+    ]
+    gaps = [
+        str(s).strip()
+        for s in data.get("gaps") or []
+        if str(s).strip()
+    ]
 
-    cand_skills = _as_str_list(data.get("candidate_skills"))
-    matched_raw = _as_str_list(data.get("matched_must_have_skills"))
-    missing_raw = _as_str_list(data.get("missing_must_have_skills"))
-    strengths = _as_str_list(data.get("strengths"))
-    gaps = _as_str_list(data.get("gaps"))
-
-    # ---- Compute skill_match_percent if missing or obviously bad ----
-    skill_match = data.get("skill_match_percent")
-    valid_skill_match = isinstance(skill_match, (int, float)) and 0 <= skill_match <= 100
-
-    if not valid_skill_match:
-        # Derive % from matched vs total must-have skills
-        total_must = len(proj_must)
-        if total_must > 0:
-            # We trust the LLM's classification here
-            n_matched = len(matched_raw)
-            derived = int(round(100.0 * n_matched / total_must))
-            skill_match = derived
-        else:
-            skill_match = 0
-
-    # ---- Candidate summary text ----
-    candidate_summary = (data.get("candidate_summary") or "").strip()
+    # Deterministic skill-match percentage based on must-have list
+    skill_match_percent = compute_skill_match(
+        project_profile.get("must_have_skills", []),
+        raw_skills,
+        matched_must_have_skills=matched,
+    )
 
     profile: Dict[str, Any] = {
-        "candidate_skills": cand_skills,
-        "matched_must_have_skills": matched_raw,
-        "missing_must_have_skills": missing_raw,
+        "candidate_summary": candidate_summary,
+        "candidate_skills": raw_skills,
+        "matched_must_have_skills": matched,
+        "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
-        "candidate_summary": candidate_summary,
-        "skill_match_percent": skill_match,
+        "skill_match_percent": skill_match_percent,
     }
     return profile
-
