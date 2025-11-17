@@ -975,15 +975,16 @@ for b in BUCKET_ORDER:
   <!-- Icon + ReadiScore -->
   <div style="display:flex;align-items:center;margin:4px 0 10px;">
     <div style="
-        width:72px;
-        height:72px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        margin-right:12px;
-    ">
-      <img src="data:image/png;base64,{WORKER_ICON}" style="width:60px;height:60px;" />
-    </div>
+    width:100px;
+    height:100px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    margin-right:14px;
+">
+  <img src="data:image/png;base64,{WORKER_ICON}" style="width:92px;height:92px;" />
+</div>
+
     <div>
       <div style="font-size:2.1rem;font-weight:900;line-height:1.1;color:#FF8A1E;">
         {int(r["readiscore"]*100)}%
