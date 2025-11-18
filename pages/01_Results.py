@@ -1001,9 +1001,10 @@ for b in BUCKET_ORDER:
 
   <!-- Skill & availability -->
   <div style="font-size:0.9rem;opacity:0.95;">
-    Skill Match: {int(r["skillfit"]*100)}%<br>
-    Total Time Available: {r["hours"]} hrs
+    Skill Match: {int(r.get("skillfit", 0.0) * 100)}%<br>
+    Total Time Available: {r.get("hours", 0)} hrs
   </div>
+
 
   <!-- Role -->
   <div style="font-size:0.9rem;margin-top:4px;opacity:0.95;">
