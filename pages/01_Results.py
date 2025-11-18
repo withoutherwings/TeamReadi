@@ -451,48 +451,30 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     project_name = params.get("project_name") or ""
 
     def header():
-        # Title with optional project byline
-        title = "ReadiReport"
-        if project_name:
-            title = f"ReadiReport: {project_name}"
+    title = "ReadiReport"
+    if project_name:
+        title = f"ReadiReport: {project_name}"
 
-        c.setFont("Helvetica-Bold", 18)
-        max_width = 470  # printable width before it runs off the page
-        y_title = h - 72
+    c.setFont("Helvetica-Bold", 18)
+    max_width = 470
+    y_title = h - 72
 
-        # Split long titles across multiple lines
-        words = title.split()
-        line: List[str] = []
-        for w_ in words:
-            test_line = " ".join(line + [w_])
-            if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
-                line.append(w_)
-            else:
-                c.drawString(72, y_title, " ".join(line))
-                y_title -= 22
-                line = [w_]
-
-        # Draw last line
-        if line:
+    words = title.split()
+    line = []
+    for w_ in words:
+        test_line = " ".join(line + [w_])
+        if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
+            line.append(w_)
+        else:
             c.drawString(72, y_title, " ".join(line))
+            y_title -= 22
+            line = [w_]
+    if line:
+        c.drawString(72, y_title, " ".join(line))
 
-        # Continue header below wrapped title
-        y0 = y_title - 18
+    # 👇 NEW: do NOT draw the window / workday / max hours lines anymore
+    # This keeps the PDF clean and makes the Candidate name the next sub-header.
 
-        c.setFont("Helvetica", 10)
-        y0 -= 14
-        c.drawString(
-            72,
-            y0,
-            f"Window: {params.get('start_date')} to {params.get('end_date')}",
-        )
-        y0 -= 14
-        c.drawString(
-            72,
-            y0,
-            f"Workdays: {', '.join(params.get('workdays', []))}   "
-            f"Max hrs/day: {params.get('max_hours')}",
-        )
 
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
