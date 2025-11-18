@@ -31,6 +31,8 @@ from backend.pipeline import (
     compute_skill_match,
 )
 
+
+
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 
