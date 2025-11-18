@@ -889,6 +889,7 @@ if project_name:
     title_text = f"ReadiReport: {project_name}"
 st.title(title_text)
 
+# Sort from highest to lowest ranking
 results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
@@ -899,16 +900,13 @@ bucket_labels = {
     "Out-of-scope": "Out-of-scope / Non-target Roles",
 }
 
-# Group results by bucket
+# Group into buckets
 grouped: Dict[str, List[Dict[str, Any]]] = {b: [] for b in BUCKET_ORDER}
 for r in results:
     b = r.get("role_bucket", "Out-of-scope")
-    if b not in grouped:
-        grouped["Out-of-scope"].append(r)
-    else:
-        grouped[b].append(r)
+    grouped[b if b in grouped else "Out-of-scope"].append(r)
 
-# Render each bucket as a row of cards
+# Display buckets
 for b in BUCKET_ORDER:
     group = grouped[b]
     if not group:
@@ -922,31 +920,27 @@ for b in BUCKET_ORDER:
         with col:
             display_name = r.get("display_name") or format_employee_label(r["emp_id"])
 
-            # Build highlight lines with ✅ / ⚠️ / ❌
+            # Build highlight lines with ✓ / ⚠ / ❌
             hl = r.get("highlights", [])
-            lines: List[str] = []
+            lines = []
             for h in hl:
                 status = h.get("status")
                 if status == "yes":
-                    icon = "✅"
+                    icon = "🟩"
                 elif status == "maybe":
-                    icon = "⚠️"
+                    icon = "🟨"
                 else:
-                    icon = "❌"
+                    icon = "🟥"
                 lines.append(f"{icon} {h.get('skill','')}")
-            highlights_html = (
-                "<br>".join(lines)
-                if lines
-                else "No specific highlights identified yet."
-            )
+            highlights_html = "<br>".join(lines) if lines else "No specific highlights identified yet."
 
             st.markdown(
                 f"""
-<div class="teamreadi-card" style="
+<div style="
   background-color:#082A4C;
   border-radius:22px;
   padding:16px 18px 14px;
-  margin-bottom:18px;
+  margin-bottom:26px;
   box-shadow:0 8px 16px rgba(0,0,0,0.25);
   color:white;
   width:260px;
@@ -956,29 +950,30 @@ for b in BUCKET_ORDER:
   display:flex;
   flex-direction:column;
 ">
+
   <!-- Name -->
   <div style="
       font-size:1.3rem;
       font-weight:800;
       color:#FF8A1E;
-      margin-bottom:6px;
+      margin-bottom:4px;
       text-transform:uppercase;
   ">
     {display_name}
   </div>
 
   <!-- Divider under name -->
-  <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 10px;"></div>
+  <div style="height:1px;background-color:rgba(255,255,255,0.28);margin:2px 0 6px;"></div>
 
-  <!-- Icon + ReadiScore -->
-  <div style="display:flex;align-items:center;margin:4px 0 10px;">
+  <!-- Icon + Score -->
+  <div style="display:flex;align-items:center;margin:2px 0 6px;">
     <div style="
         width:110px;
         height:110px;
         display:flex;
         align-items:center;
         justify-content:center;
-        margin-right:14px;
+        margin-right:12px;
     ">
       <img src="data:image/png;base64,{WORKER_ICON}" style="width:100px;height:100px;" />
     </div>
@@ -992,10 +987,10 @@ for b in BUCKET_ORDER:
     </div>
   </div>
 
-  <!-- Divider line -->
-  <div style="height:1px;background-color:rgba(255,255,255,0.25);margin:4px 0 8px;"></div>
+  <!-- Divider below icon -->
+  <div style="height:1px;background-color:rgba(255,255,255,0.28);margin:2px 0 6px;"></div>
 
-  <!-- Skill & availability -->
+  <!-- Skill / Availability -->
   <div style="font-size:0.9rem;opacity:0.95;">
     Skill Match: {int(r["skillfit"]*100)}%<br>
     Total Time Available: {r["hours"]} hrs
@@ -1006,22 +1001,26 @@ for b in BUCKET_ORDER:
     Ideal Fit: {r.get("role_title","")}
   </div>
 
+  <!-- Divider above Highlights -->
+  <div style="height:1px;background-color:rgba(255,255,255,0.28);margin:8px 0 6px;"></div>
+
   <!-- Highlights -->
   <div style="
       font-size:0.9rem;
-      margin-top:10px;
+      margin-top:2px;
       font-weight:700;
       color:#FF8A1E;
   ">
     Highlights
   </div>
-  <div style="font-size:0.8rem;margin-top:2px;opacity:0.95;">
+  <div style="font-size:0.8rem;margin-top:2px;opacity:0.92;">
     {highlights_html}
   </div>
 </div>
 """,
                 unsafe_allow_html=True,
             )
+
 
 
 # ---------------------------------------------------------------------------
