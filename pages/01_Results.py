@@ -580,15 +580,12 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.drawString(72, y, f"Candidate: {display_name}")
         y -= 18
 
-        score = float(r.get("readiscore", 0.0) or 0.0)
-
         c.setFont("Helvetica", 10)
         c.drawString(
             72,
             y,
-            f"ReadiScore: {int(score * 100)}%   (Rank #{idx})",
+            f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})",
         )
-
         y -= 14
         c.drawString(
             72,
@@ -596,16 +593,12 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             f"Ideal Fit: {r.get('role_title','')}   Bucket: {r.get('role_bucket','')}",
         )
         y -= 14
-        skillfit = float(r.get("skillfit", 0.0) or 0.0)
-        hours = float(r.get("hours", 0.0) or 0.0)
-
         c.drawString(
             72,
             y,
-            f"Skill match: {int(skillfit * 100)}%   Availability: {int(hours)} hrs "
-            f"({int((hours / window_baseline) * 100)}% of window capacity)",
+            f"Skill match: {int(r['skillfit']*100)}%   Availability: {r['hours']} hrs "
+            f"({int((r['hours']/window_baseline)*100)}% of window capacity)",
         )
-
         y -= 22
 
         profile = r.get("profile") or {}
@@ -817,7 +810,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             max_hours,
         )
 
-    # ---- Build candidate profiles ----
+    # ----- Build candidate profiles -----
     candidates: List[Dict[str, Any]] = []
     for up in resumes_raw:
         stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
@@ -828,9 +821,14 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
 
         cand_profile = build_candidate_profile(text, project_profile)
 
-        # Use the LLM/pipeline-computed skill percentage directly
-        skill_match_pct = float(cand_profile.get("skill_match_percent", 0.0))
-        skillfit = skill_match_pct / 100.0
+        # Try to use LLM-computed percentage; fall back to simple overlap
+        skill_match_pct = cand_profile.get("skill_match_percent")
+        if skill_match_pct is None:
+            skill_match_pct = compute_skill_match(
+                project_profile.get("must_have_skills", []),
+                cand_profile.get("candidate_skills", []),
+            )
+        skillfit = float(skill_match_pct) / 100.0
 
         role_info = infer_resume_role(job_text, text)
 
@@ -849,7 +847,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
                 "skillfit": skillfit,
             }
         )
-        return candidates, project_profile, window_baseline, project_name
 
     # ----- Compute Readiscore + highlights -----
     results: List[Dict[str, Any]] = []
@@ -896,11 +893,7 @@ if project_name:
     title_text = f"ReadiReport: {project_name}"
 st.title(title_text)
 
-results = sorted(
-    results,
-    key=lambda r: r.get("readiscore", 0.0),
-    reverse=True,
-)
+results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
@@ -995,8 +988,8 @@ for b in BUCKET_ORDER:
     </div>
     <div>
       <div style="font-size:2.1rem;font-weight:900;line-height:1.1;color:#FF8A1E;">
-    {int(r.get("readiscore", 0.0) * 100)}%
-    </div>
+        {int(r["readiscore"]*100)}%
+      </div>
       <div style="font-size:0.9rem;font-weight:600;opacity:0.95;">
         ReadiScore
       </div>
@@ -1008,10 +1001,9 @@ for b in BUCKET_ORDER:
 
   <!-- Skill & availability -->
   <div style="font-size:0.9rem;opacity:0.95;">
-    Skill Match: {int(r.get("skillfit", 0.0) * 100)}%<br>
-    Total Time Available: {r.get("hours", 0)} hrs
+    Skill Match: {int(r["skillfit"]*100)}%<br>
+    Total Time Available: {r["hours"]} hrs
   </div>
-
 
   <!-- Role -->
   <div style="font-size:0.9rem;margin-top:4px;opacity:0.95;">
@@ -1075,5 +1067,3 @@ if st.button("Return to Start"):
         "<script>parent.window.location.href='/'</script>",
         unsafe_allow_html=True,
     )
-
-
