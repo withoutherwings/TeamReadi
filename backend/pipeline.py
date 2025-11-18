@@ -309,9 +309,6 @@ def build_candidate_profile(
         but they do NOT count as missing must-have skills and they do NOT
         reduce the skill_match_percent.
     """
-
-    # Import here to avoid circular import at module load time
-    from backend.skills_backend import extract_resume_skills
     
     base = extract_resume_skills(resume_text)
     candidate_summary = base["candidate_summary"]
