@@ -113,15 +113,19 @@ def _split_person_vs_company(requirements) -> tuple[list[str], list[str]]:
 # Project profile
 # ---------------------------------------------------------------------------
 
+from typing import Dict, Any  # keep this near the top of the file too
+
+
 def build_project_profile(job_text: str) -> Dict[str, Any]:
     """
-    Use the LLM to summarize the RFP and extract structured fields.
+    Use the LLM (or a stub when USE_LLM is False) to summarize the RFP and
+    extract structured fields for the rest of the pipeline.
 
     We intentionally keep *person-level* skill requirements separate from
     company-level business/certification requirements so that candidates
     are not penalized for SDVOSB status, FAR compliance, etc.
 
-    We also ask for three summary paragraphs:
+    We also ask for three clearly separated summary paragraphs:
       - p1 = overview (what / where / why)
       - p2 = owner / company-level constraints & requirements
       - p3 = what the project team / key personnel will actually do
@@ -135,6 +139,7 @@ def build_project_profile(job_text: str) -> Dict[str, Any]:
             "must_have_skills": [],
             "nice_to_have_skills": [],
             "company_requirements": [],
+            "trainable_requirements": [],
             "role_mix_by_bucket": {},
         }
 
@@ -193,7 +198,14 @@ Extract the following fields:
    COMPANY-LEVEL requirements (set-asides, SDVOSB, FAR clauses, bonding,
    VA-specific rules, etc.).
 
-10. "role_mix_by_bucket": an object with integer counts estimating how many
+10. "trainable_requirements": an array of SHORT items describing regulatory,
+    procedural, or contract-knowledge expectations that are important but
+    realistically trainable for competent staff (e.g. NPDES reporting,
+    Buy American Act compliance, specific state procurement rules,
+    facility-specific IT or scheduling portals).
+    These are NOT treated as hard disqualifying must-have skills.
+
+11. "role_mix_by_bucket": an object with integer counts estimating how many
     people the OWNER will realistically need at peak in each of three buckets:
       - "PM/Admin"
       - "Support/Coordination"
@@ -205,29 +217,38 @@ Return ONLY a valid JSON object with exactly these keys:
 "project_summary_p1", "project_summary_p2", "project_summary_p3",
 "project_window", "project_location",
 "must_have_skills", "nice_to_have_skills",
-"company_requirements",
+"company_requirements", "trainable_requirements",
 "role_mix_by_bucket".
 """
 
     data = _llm_json(prompt) or {}
 
-    # Person-level vs company-level skills
+    # ---- Person-level vs company-level skills ----
     raw_must = data.get("must_have_skills") or []
     raw_nice = data.get("nice_to_have_skills") or []
 
     must_person, must_company = _split_person_vs_company(raw_must)
     nice_person, nice_company = _split_person_vs_company(raw_nice)
 
+    # Explicit company requirements from the JSON (may overlap with split output)
     explicit_company = data.get("company_requirements") or []
 
     # Clean + de-duplicate company-level requirements
-    company_reqs: List[str] = []
+    company_reqs: list[str] = []
     for item in list(must_company + nice_company + explicit_company):
         s = str(item).strip()
         if s and s not in company_reqs:
             company_reqs.append(s)
 
-    # Build final multi-paragraph summary
+    # Trainable requirements (keep as-is, just clean)
+    trainable_raw = data.get("trainable_requirements") or []
+    trainable: list[str] = []
+    for item in trainable_raw:
+        s = str(item).strip()
+        if s and s not in trainable:
+            trainable.append(s)
+
+    # ---- Build final multi-paragraph summary ----
     p1 = str(data.get("project_summary_p1") or "").strip()
     p2 = str(data.get("project_summary_p2") or "").strip()
     p3 = str(data.get("project_summary_p3") or "").strip()
@@ -236,6 +257,7 @@ Return ONLY a valid JSON object with exactly these keys:
         pieces = [p for p in (p1, p2, p3) if p]
         project_summary = "\n\n".join(pieces)
     else:
+        # Fallback if the model ignored the new keys
         raw_summary = data.get("project_summary", "")
         if isinstance(raw_summary, list):
             project_summary = " ".join(str(x) for x in raw_summary)
@@ -247,14 +269,17 @@ Return ONLY a valid JSON object with exactly these keys:
         "project_summary": project_summary.strip(),
         "project_window": str(data.get("project_window") or "").strip(),
         "project_location": str(data.get("project_location") or "").strip(),
-        # Only person-level items feed into skill matching and highlights
+        # Only person-level items feed into skill matching and highlights:
         "must_have_skills": must_person,
         "nice_to_have_skills": nice_person,
-        # Company-level requirements kept for the project summary page
+        # Company-level requirements kept for the project summary page:
         "company_requirements": company_reqs,
+        # New: things like NPDES, specific regs, etc., treated as teachable
+        "trainable_requirements": trainable,
         "role_mix_by_bucket": data.get("role_mix_by_bucket") or {},
     }
     return profile
+
 
 # ---------------------------------------------------------------------------
 # Candidate profiling & skill matching
@@ -262,64 +287,6 @@ Return ONLY a valid JSON object with exactly these keys:
 
 from typing import Dict, Any, List, Optional
 import json
-
-
-def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
-    """
-    FIRST STAGE: look ONLY at the resume and pull out a grounded skill list.
-
-    - No project/RFP context is shown here.
-    - The model is explicitly told NOT to invent skills that are not clearly stated.
-    """
-    if not resume_text or not resume_text.strip():
-        return {"candidate_summary": "", "raw_skills": []}
-
-    prompt = f"""
-You are reading ONE anonymous construction/engineering RESUME.
-
-Your job is to stay 100% grounded in the resume and extract only the skills
-and experiences that are clearly supported by the text. DO NOT guess or infer
-skills that are not mentioned.
-
-RESUME TEXT:
----
-{resume_text[:12000]}
----
-
-Return a JSON object with:
-
-1. "candidate_summary": 2–3 sentences summarizing the person's background
-   and strengths for construction / infrastructure work. Mention sectors
-   (healthcare, transportation, etc.) and typical scope, but do NOT mention
-   any specific RFP or project from outside this resume.
-
-2. "raw_skills": a list of SHORT skill/experience phrases (5–12 words each).
-   Each item MUST be directly supported by the resume text.
-
-Rules for "raw_skills":
-- If the resume does NOT say "EHRM", "EHR", "electronic health record(s)",
-  or similar phrasing, you MUST NOT claim that as a skill.
-- Do NOT infer ownership status (SDVOSB, WOSB, 8(a), HUBZone, etc.).
-- Do NOT invent experience with specific DOTs, agencies, or hospitals unless
-  those names appear in the resume.
-- Do NOT include generic legal/contract trivia like
-  "experience handling liquidated damages" or "knowledge of North Carolina
-  state construction regulations" unless those phrases (or very close wording)
-  appear explicitly in the resume.
-
-Return ONLY a JSON object with keys:
-  "candidate_summary": string
-  "raw_skills": [string, ...]
-"""
-
-    data = _llm_json(prompt) or {}
-    summary = str(data.get("candidate_summary") or "").strip()
-    skills = [
-        str(s).strip()
-        for s in data.get("raw_skills") or []
-        if str(s).strip()
-    ]
-    return {"candidate_summary": summary, "raw_skills": skills}
 
 
 def build_candidate_profile(
@@ -331,30 +298,26 @@ def build_candidate_profile(
 
     Pipeline:
       1) Call extract_resume_skills() to get a grounded list of skills.
-      2) Show ONLY those skills + the project must/nice-to-have lists and
-         a short description of what the team will actually do (P3).
-      3) Ask the model to classify each must-have as yes / maybe / no and
+      2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
+      3) Ask it to decide which project must-haves are met vs missing, and to
          write strengths/gaps WITHOUT inventing new skills.
+
+    NEW:
+      - project_profile['trainable_requirements'] is passed separately.
+      - Trainable items may be mentioned as "will need to learn X" style gaps,
+        but they do NOT count as missing must-have skills and they do NOT
+        reduce the skill_match_percent.
     """
     base = extract_resume_skills(resume_text)
-    candidate_background = base["candidate_summary"]
+    candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
 
     must = project_profile.get("must_have_skills") or []
     nice = project_profile.get("nice_to_have_skills") or []
-
-    # Use last paragraph of the project summary as "what the team will do"
-    summary_text = project_profile.get("project_summary", "") or ""
-    paras = [p.strip() for p in summary_text.split("\n\n") if p.strip()]
-    team_resp = paras[-1] if paras else summary_text
+    trainable = project_profile.get("trainable_requirements") or []
 
     prompt = f"""
 You are aligning ONE candidate's resume skills to ONE construction project.
-
-PROJECT TEAM RESPONSIBILITIES (what this team actually does):
----
-{team_resp}
----
 
 PROJECT REQUIREMENTS (from the RFP):
 - Must-have skills (individual person-level, not company status):
@@ -362,129 +325,89 @@ PROJECT REQUIREMENTS (from the RFP):
 - Nice-to-have skills (individual person-level):
 {json.dumps(nice, indent=2, ensure_ascii=False)}
 
+TRAINABLE KNOWLEDGE / REQUIREMENTS
+(important but realistically teachable for competent staff):
+{json.dumps(trainable, indent=2, ensure_ascii=False)}
+
 CANDIDATE SKILLS (derived directly from the resume and MUST NOT be changed):
 {json.dumps(raw_skills, indent=2, ensure_ascii=False)}
 
-For EACH must-have skill in the project list, you MUST put it in exactly ONE
-of three buckets:
-  - clearly matched by the candidate skills ("yes"),
-  - partially or indirectly supported ("maybe"),
-  - clearly not supported ("no").
+Your tasks:
 
-Return ONLY a JSON object with keys:
+1. Decide which project MUST-HAVE skills are clearly supported by the
+   candidate skills. Treat a must-have as "matched" only if there is a direct
+   or very close semantic match in CANDIDATE SKILLS.
 
-- "matched_must_have_skills": array of must-have phrases classified as "yes".
-- "partial_must_have_skills": array of must-have phrases classified as "maybe".
-- "missing_must_have_skills": array of must-have phrases classified as "no".
+2. Build two lists ONLY for the strict must-have skills (NOT for trainable items):
+   - "matched_must_have_skills": project must-have phrases that ARE supported.
+   - "missing_must_have_skills": project must-have phrases that are NOT clearly
+     supported.
 
-- "strengths": 3–6 short bullet phrases (max ~15 words each) describing
-  this candidate's BEST strengths for THIS project.
+   Do NOT include items from the TRAINABLE list in either of these lists.
 
-- "gaps": 3–6 short bullet phrases describing the most important weaknesses
-  or missing requirements vs THIS project. Focus on meaningful person-level
-  gaps (no large healthcare projects, limited PM responsibility, etc.), not
-  trivia about specific legal clauses or state regs unless those are strict
-  must-haves.
-
-- "project_fit_summary": 2–3 sentences answering:
-    * How useful would this person be on THIS project?
-    * In what role (lead PM, support PM, field coordinator, etc.)?
-    * Are they a stretch fit, solid fit, or weak fit overall?
+3. Write:
+   - "strengths": 3–6 short bullet phrases (max ~15 words each) describing
+     this candidate's BEST strengths for THIS project.
+   - "gaps": 3–6 short bullet phrases describing the most important weaknesses
+     or missing requirements vs THIS project, including:
+       * true missing must-have skills, and
+       * any TRAINABLE items that are absent, phrased softly as
+         "Will need to learn/receive support on X" instead of hard disqualifiers.
 
 Important rules:
 - You MAY NOT invent new candidate skills that are not in CANDIDATE SKILLS.
-- You MAY NOT upgrade generic experience into hyper-specific systems
-  (e.g. "extensive EHRM experience") unless that language appears in
-  CANDIDATE SKILLS.
+- You MAY NOT upgrade generic healthcare or transportation experience into
+  highly specific systems (e.g. "extensive EHRM experience") unless that
+  system is explicitly mentioned in CANDIDATE SKILLS.
+- Avoid trivia and ultra-specific legal/contract points as hard gaps, such as:
+    * liquidated damages clauses
+    * knowledge of a particular state's procurement laws or regulations
+    * having worked at the exact named facility
+  unless those are spelled out as strict must-haves AND clearly absent.
+- TRAINABLE items should be treated as "nice to have but teachable", never as
+  automatic disqualifiers.
+
+Return ONLY a JSON object with keys:
+  "matched_must_have_skills"
+  "missing_must_have_skills"
+  "strengths"
+  "gaps"
 """
 
     data = _llm_json(prompt) or {}
 
-    def _as_str_list(x) -> list[str]:
-        if isinstance(x, str):
-            return [x.strip()] if x.strip() else []
-        if isinstance(x, (list, tuple, set)):
-            out = []
-            for item in x:
-                s = str(item).strip()
-                if s:
-                    out.append(s)
-            return out
-        return []
+    def _norm_list(key: str) -> List[str]:
+        raw = data.get(key) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        out: List[str] = []
+        for item in raw:
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        return out
 
-    matched = _as_str_list(data.get("matched_must_have_skills"))
-    partial = _as_str_list(data.get("partial_must_have_skills"))
-    missing = _as_str_list(data.get("missing_must_have_skills"))
-    strengths = _as_str_list(data.get("strengths"))
-    gaps = _as_str_list(data.get("gaps"))
-    project_fit_summary = (data.get("project_fit_summary") or "").strip()
+    matched = _norm_list("matched_must_have_skills")
+    missing = _norm_list("missing_must_have_skills")
+    strengths = _norm_list("strengths")
+    gaps = _norm_list("gaps")
 
-    # Deterministic skill-match percentage:
-    # yes  = 1.0 point, maybe = 0.5 point, no = 0.
+    # Deterministic skill-match percentage based only on strict must-have list
+    # and the matched_must_have_skills bucket. TRAINABLE items do not affect this.
+    strict_must = [s for s in must if s not in trainable]
     skill_match_percent = compute_skill_match(
-        must_have_skills=must,
-        candidate_skills=raw_skills,
+        strict_must,
+        raw_skills,
         matched_must_have_skills=matched,
-        partial_must_have_skills=partial,
     )
 
     profile: Dict[str, Any] = {
-        "candidate_background_summary": candidate_background,
+        "candidate_summary": candidate_summary,
         "candidate_skills": raw_skills,
         "matched_must_have_skills": matched,
-        "partial_must_have_skills": partial,
         "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
-        "project_fit_summary": project_fit_summary,
         "skill_match_percent": skill_match_percent,
     }
     return profile
-
-
-def compute_skill_match(
-    must_have_skills: List[str],
-    candidate_skills: List[str],  # kept for backwards compatibility
-    matched_must_have_skills: Optional[List[str]] = None,
-    partial_must_have_skills: Optional[List[str]] = None,
-) -> float:
-    """
-    Compute a conservative skill-match percentage (0–100).
-
-    Logic:
-      - We only score against project *must-have* skills.
-      - If we have explicit matched/partial lists, we trust those:
-          yes  = 1.0 point
-          maybe = 0.5 point
-          no   = 0
-      - If they are missing, we fall back to simple string overlap.
-    """
-    must = [s.strip().lower() for s in must_have_skills if s and s.strip()]
-    if not must:
-        return 0.0
-
-    # If LLM gave us explicit buckets, use them
-    if matched_must_have_skills is not None or partial_must_have_skills is not None:
-        matched_norm = {
-            s.strip().lower() for s in (matched_must_have_skills or []) if s and s.strip()
-        }
-        partial_norm = {
-            s.strip().lower() for s in (partial_must_have_skills or []) if s and s.strip()
-        }
-
-        yes_hits = sum(1 for m in must if m in matched_norm)
-        maybe_hits = sum(
-            1 for m in must
-            if (m in partial_norm) and (m not in matched_norm)
-        )
-
-        score = float(yes_hits) + 0.5 * float(maybe_hits)
-        return 100.0 * score / float(len(must))
-
-    # Fallback: naive overlap between must-have phrases and candidate skills
-    cand_norm = {
-        s.strip().lower() for s in candidate_skills if s and s.strip()
-    }
-    hits = sum(1 for m in must if m in cand_norm)
-    return 100.0 * float(hits) / float(len(must))
-
