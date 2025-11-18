@@ -12,6 +12,7 @@ import json
 from typing import Dict, List, Any, Set, Optional
 
 from openai import OpenAI
+from backend.skills_backend import extract_resume_skills
 
 
 # ---------------------------------------------------------------------------
