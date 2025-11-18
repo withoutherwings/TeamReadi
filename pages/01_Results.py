@@ -988,8 +988,8 @@ for b in BUCKET_ORDER:
     </div>
     <div>
       <div style="font-size:2.1rem;font-weight:900;line-height:1.1;color:#FF8A1E;">
-        {int(r["readiscore"]*100)}%
-      </div>
+    {int(r.get("readiscore", 0.0) * 100)}%
+    </div>
       <div style="font-size:0.9rem;font-weight:600;opacity:0.95;">
         ReadiScore
       </div>
