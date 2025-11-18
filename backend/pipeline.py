@@ -281,13 +281,50 @@ Return ONLY a valid JSON object with exactly these keys:
     }
     return profile
 
-
 # ---------------------------------------------------------------------------
 # Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
-from typing import Dict, Any, List, Optional
-import json
+from typing import List, Optional  # Dict / Any already imported above
+import json                       # already imported above; harmless to repeat
+
+
+def _extract_resume_skills_fallback(resume_text: str) -> Dict[str, Any]:
+    """
+    Very simple inline resume/skills extractor so we don't depend on
+    backend.skills_backend (which is currently failing to import).
+
+    Returns a dict:
+        {
+          "candidate_summary": short text summary,
+          "raw_skills": [list of 'skills' strings]
+        }
+
+    For now we treat each non-empty line of the resume as a potential
+    skill phrase and deduplicate them.
+    """
+    text = resume_text or ""
+
+    # Split into non-empty lines, trim bullets and whitespace
+    lines = [ln.strip(" •-\t\r") for ln in text.splitlines() if ln.strip()]
+
+    seen: set[str] = set()
+    skills: List[str] = []
+    for ln in lines:
+        low = ln.lower()
+        # keep reasonably sized lines only, and dedupe
+        if 3 <= len(ln) <= 120 and low not in seen:
+            seen.add(low)
+            skills.append(ln)
+
+    summary = " ".join(lines)
+    if len(summary) > 400:
+        summary = summary[:400] + "..."
+
+    return {
+        "candidate_summary": summary,
+        "raw_skills": skills,
+    }
 
 
 def build_candidate_profile(
@@ -298,7 +335,7 @@ def build_candidate_profile(
     SECOND STAGE: compare resume skills to the project profile.
 
     Pipeline:
-      1) Call extract_resume_skills() to get a grounded list of skills.
+      1) Call _extract_resume_skills_fallback() to get a grounded list of skills.
       2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
       3) Ask it to decide which project must-haves are met vs missing, and to
          write strengths/gaps WITHOUT inventing new skills.
@@ -309,8 +346,8 @@ def build_candidate_profile(
         but they do NOT count as missing must-have skills and they do NOT
         reduce the skill_match_percent.
     """
-    
-    base = extract_resume_skills(resume_text)
+    # NOTE: We use the inline fallback now instead of backend.skills_backend
+    base = _extract_resume_skills_fallback(resume_text)
     candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
 
@@ -413,6 +450,43 @@ Return ONLY a JSON object with keys:
         "skill_match_percent": skill_match_percent,
     }
     return profile
+
+
+# ---------------------------------------------------------------------------
+# Low-level skill matching helper
+# ---------------------------------------------------------------------------
+
+def compute_skill_match(
+    must_have_skills: List[str],
+    candidate_skills: List[str],
+    matched_must_have_skills: Optional[List[str]] = None,
+) -> float:
+    """
+    Return a 0–100 percentage of how many must_have_skills are clearly met.
+
+    If matched_must_have_skills is provided (from the LLM), we trust that list
+    and compute the score from it. Otherwise we fall back to a simple overlap
+    between normalized text in must_have_skills and candidate_skills.
+    """
+    # Normalize must-have list
+    must = [str(s).strip().lower() for s in (must_have_skills or []) if str(s).strip()]
+    if not must:
+        return 0.0
+
+    # Case 1: LLM gave us an explicit matched_must_have_skills bucket
+    if matched_must_have_skills is not None:
+        matched_clean = [
+            str(s).strip().lower()
+            for s in (matched_must_have_skills or [])
+            if str(s).strip()
+        ]
+        return 100.0 * len(matched_clean) / len(must)
+
+    # Case 2: simple overlap fallback
+    cand = {str(s).strip().lower() for s in (candidate_skills or []) if str(s).strip()}
+    matched_count = sum(1 for m in must if m in cand)
+    return 100.0 * matched_count / len(must)
+
 
 # ---------------------------------------------------------------------------
 # Low-level skill matching helper
