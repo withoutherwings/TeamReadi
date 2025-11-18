@@ -276,3 +276,118 @@ def extract_resume_skills(*args, **kwargs):
         requirements = extract_project_requirements(project_text)
 
     return score_resume_against_requirements(requirements, resume_text)
+
+# ---------- Resume summarization + skill extraction (for pipeline) ----------
+
+def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
+    """
+    Used by backend.pipeline.build_candidate_profile.
+
+    Returns a dict with at least:
+      {
+        "candidate_summary": "<short narrative summary>",
+        "skills": ["skill one", "skill two", ...]
+      }
+
+    So that pipeline can do:
+        base = extract_resume_skills(resume_text)
+        candidate_summary = base["candidate_summary"]
+        # (and possibly use base["skills"] as well)
+    """
+    client = _get_client()
+    cleaned = (resume_text or "").strip()
+
+    # ---------- simple fallback if no API or empty text ----------
+    if not client or not cleaned:
+        # naive heuristic skills: the first 15 unique 4+ letter words
+        tokens = re.findall(r"[A-Za-z]{4,}", cleaned)
+        seen = []
+        for t in tokens:
+            t_low = t.lower()
+            if t_low not in seen:
+                seen.append(t_low)
+            if len(seen) >= 15:
+                break
+
+        summary = cleaned[:400].replace("\n", " ") if cleaned else ""
+        return {
+            "candidate_summary": summary,
+            "skills": seen,
+        }
+
+    # ---------- LLM-based summary + skills ----------
+    system_msg = (
+        "You read construction resumes and return a short narrative summary "
+        "and a list of distinct, trainable skills. "
+        "Respond ONLY with valid JSON in the schema "
+        '{"candidate_summary": str, "skills": [str, ...]}.'
+    )
+
+    user_prompt = f"""
+Resume:
+\"\"\"{cleaned}\"\"\"
+
+Tasks:
+1. Write a 3–5 sentence narrative summary of the candidate's experience,
+   focusing on construction roles, project types, and responsibilities.
+2. Produce a list of 10–20 distinct skill phrases (4–8 words each) that capture
+   the person's capabilities (e.g., "bridge inspection coordination",
+   "construction phasing and traffic control", "schedule risk analysis").
+
+Return JSON only:
+{{
+  "candidate_summary": "...",
+  "skills": ["...", "...", "..."]
+}}
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("MODEL_NAME", "gpt-4.1-mini"),
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=900,
+        )
+
+        raw = resp.choices[0].message.content or ""
+        data = json.loads(raw)
+
+        summary = str(data.get("candidate_summary", "")).strip()
+        skills_raw = data.get("skills", [])
+
+        skills: List[str] = []
+        if isinstance(skills_raw, list):
+            for s in skills_raw:
+                s = str(s).strip()
+                if s:
+                    skills.append(s)
+
+        # Ensure keys exist so pipeline doesn't KeyError
+        if not summary:
+            summary = cleaned[:400].replace("\n", " ")
+
+        return {
+            "candidate_summary": summary,
+            "skills": skills,
+        }
+
+    except Exception:
+        # Fall back to the same heuristic as the no-API path
+        tokens = re.findall(r"[A-Za-z]{4,}", cleaned)
+        seen = []
+        for t in tokens:
+            t_low = t.lower()
+            if t_low not in seen:
+                seen.append(t_low)
+            if len(seen) >= 15:
+                break
+
+        summary = cleaned[:400].replace("\n", " ") if cleaned else ""
+        return {
+            "candidate_summary": summary,
+            "skills": seen,
+        }
+
