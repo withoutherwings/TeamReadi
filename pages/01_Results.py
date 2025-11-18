@@ -28,6 +28,7 @@ from backend.roles_backend import infer_resume_role
 from backend.pipeline import (
     build_project_profile,
     build_candidate_profile,
+    compute_skill_match,
 )
 
 
