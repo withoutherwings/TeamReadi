@@ -285,46 +285,8 @@ Return ONLY a valid JSON object with exactly these keys:
 # Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
-from typing import List, Optional  # Dict / Any already imported above
-import json                       # already imported above; harmless to repeat
-
-
-def _extract_resume_skills_fallback(resume_text: str) -> Dict[str, Any]:
-    """
-    Very simple inline resume/skills extractor so we don't depend on
-    backend.skills_backend (which is currently failing to import).
-
-    Returns a dict:
-        {
-          "candidate_summary": short text summary,
-          "raw_skills": [list of 'skills' strings]
-        }
-
-    For now we treat each non-empty line of the resume as a potential
-    skill phrase and deduplicate them.
-    """
-    text = resume_text or ""
-
-    # Split into non-empty lines, trim bullets and whitespace
-    lines = [ln.strip(" •-\t\r") for ln in text.splitlines() if ln.strip()]
-
-    seen: set[str] = set()
-    skills: List[str] = []
-    for ln in lines:
-        low = ln.lower()
-        # keep reasonably sized lines only, and dedupe
-        if 3 <= len(ln) <= 120 and low not in seen:
-            seen.add(low)
-            skills.append(ln)
-
-    summary = " ".join(lines)
-    if len(summary) > 400:
-        summary = summary[:400] + "..."
-
-    return {
-        "candidate_summary": summary,
-        "raw_skills": skills,
-    }
+from typing import Dict, Any, List, Optional
+import json
 
 
 def build_candidate_profile(
@@ -335,7 +297,7 @@ def build_candidate_profile(
     SECOND STAGE: compare resume skills to the project profile.
 
     Pipeline:
-      1) Call _extract_resume_skills_fallback() to get a grounded list of skills.
+      1) Call extract_resume_skills() to get a grounded list of skills.
       2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
       3) Ask it to decide which project must-haves are met vs missing, and to
          write strengths/gaps WITHOUT inventing new skills.
@@ -344,10 +306,12 @@ def build_candidate_profile(
       - project_profile['trainable_requirements'] is passed separately.
       - Trainable items may be mentioned as "will need to learn X" style gaps,
         but they do NOT count as missing must-have skills and they do NOT
-        reduce the skill_match_percent.
+        reduce the strict must-have score.
+      - We compute TWO scores:
+          * strict_skill_match_percent: coverage of strict must-haves only
+          * skill_match_percent: broader score vs must + nice-to-haves
     """
-    # NOTE: We use the inline fallback now instead of backend.skills_backend
-    base = _extract_resume_skills_fallback(resume_text)
+    base = extract_resume_skills(resume_text)
     candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
 
@@ -431,13 +395,21 @@ Return ONLY a JSON object with keys:
     strengths = _norm_list("strengths")
     gaps = _norm_list("gaps")
 
-    # Deterministic skill-match percentage based only on strict must-have list
-    # and the matched_must_have_skills bucket. TRAINABLE items do not affect this.
+    # ---- 1) STRICT score: only true must-have skills (what you see in Highlights) ----
     strict_must = [s for s in must if s not in trainable]
-    skill_match_percent = compute_skill_match(
+    strict_skill_match_percent = compute_skill_match(
         strict_must,
         raw_skills,
         matched_must_have_skills=matched,
+    )
+
+    # ---- 2) BROADER score: overall fit vs must + nice (what you want on the tiles) ----
+    # We ignore trainable items completely here; they don't help or hurt.
+    overall_targets = [s for s in (must + nice) if s not in trainable]
+    overall_skill_match_percent = compute_skill_match(
+        overall_targets,
+        raw_skills,
+        matched_must_have_skills=None,  # use simple overlap, not only LLM list
     )
 
     profile: Dict[str, Any] = {
@@ -447,7 +419,10 @@ Return ONLY a JSON object with keys:
         "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
-        "skill_match_percent": skill_match_percent,
+        # This is the MAIN score the rest of the app uses (0–100)
+        "skill_match_percent": overall_skill_match_percent,
+        # This keeps the stricter must-have score around for PDF / diagnostics
+        "strict_skill_match_percent": strict_skill_match_percent,
     }
     return profile
 
