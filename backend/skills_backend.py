@@ -242,3 +242,37 @@ Rules:
 
     except Exception:
         return _fallback_resume_score(requirements, resume_text)
+
+# ---------- Backwards-compatible wrapper for older pipeline code ----------
+
+def extract_resume_skills(*args, **kwargs):
+    """
+    Backwards-compatible helper used by backend.pipeline.build_candidate_profile.
+
+    Accepts either:
+      - (project_text, resume_text)
+      - (requirements_list, resume_text)
+
+    Returns:
+      {
+        "per_skill": [...],
+        "skill_match_pct": number
+      }
+    using the same LLM / fallback logic as score_resume_against_requirements.
+    """
+    if len(args) < 2:
+        raise ValueError(
+            "extract_resume_skills expects at least project/context and resume_text"
+        )
+
+    first, resume_text = args[0], args[1]
+
+    # If the first arg already looks like a requirements list, use it directly.
+    if isinstance(first, list) and first and isinstance(first[0], dict) and "label" in first[0]:
+        requirements = first
+    else:
+        # Otherwise treat it as project text and extract requirements from it.
+        project_text = str(first) if first is not None else ""
+        requirements = extract_project_requirements(project_text)
+
+    return score_resume_against_requirements(requirements, resume_text)
