@@ -938,10 +938,9 @@ for b in BUCKET_ORDER:
                 if lines
                 else "No specific highlights identified yet."
             )
-
             st.markdown(
                 f"""
-<div class="teamreadi-card" style="
+<div style="
   background-color:#082A4C;
   border-radius:22px;
   padding:16px 18px 14px;
@@ -956,13 +955,7 @@ for b in BUCKET_ORDER:
   flex-direction:column;
 ">
   <!-- Name -->
-  <div style="
-      font-size:1.3rem;
-      font-weight:800;
-      color:#FF8A1E;
-      margin-bottom:6px;
-      text-transform:uppercase;
-  ">
+  <div style="font-size:1.3rem;font-weight:800;color:#FF8A1E;margin-bottom:6px;text-transform:uppercase;">
     {display_name}
   </div>
 
@@ -972,14 +965,14 @@ for b in BUCKET_ORDER:
   <!-- Icon + ReadiScore -->
   <div style="display:flex;align-items:center;margin:4px 0 10px;">
     <div style="
-        width:110px;
-        height:110px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        margin-right:14px;
+      width:96px;
+      height:96px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      margin-right:14px;
     ">
-      <img src="data:image/png;base64,{WORKER_ICON}" style="width:100px;height:100px;" />
+      <img src="data:image/png;base64,{WORKER_ICON}" style="width:88px;height:88px;" />
     </div>
 
     <div>
@@ -1007,12 +1000,7 @@ for b in BUCKET_ORDER:
   </div>
 
   <!-- Highlights -->
-  <div style="
-      font-size:0.9rem;
-      margin-top:10px;
-      font-weight:700;
-      color:#FF8A1E;
-  ">
+  <div style="font-size:0.9rem;margin-top:10px;font-weight:700;color:#FF8A1E;">
     Highlights
   </div>
   <div style="font-size:0.8rem;margin-top:2px;opacity:0.95;">
@@ -1022,6 +1010,8 @@ for b in BUCKET_ORDER:
 """,
                 unsafe_allow_html=True,
             )
+
+            
 
 # ---------------------------------------------------------------------------
 # PDF + bottom buttons
