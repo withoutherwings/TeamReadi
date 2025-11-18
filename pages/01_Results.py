@@ -28,7 +28,6 @@ from backend.roles_backend import infer_resume_role
 from backend.pipeline import (
     build_project_profile,
     build_candidate_profile,
-    compute_skill_match,
 )
 
 
@@ -810,43 +809,39 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             max_hours,
         )
 
-    # ----- Build candidate profiles -----
-    candidates: List[Dict[str, Any]] = []
-    for up in resumes_raw:
-        stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
-        text = extract_text_from_upload(up)
+   # ---- Build candidate profiles ----
+candidates: List[Dict[str, Any]] = []
+for up in resumes_raw:
+    stem = filename_stem(getattr(up, "name", getattr(up, "filename", "employee")))
+    text = extract_text_from_upload(up)
 
-        display_name = infer_employee_display_name(stem, text)
-        calendar_tags = build_employee_calendar_tags(display_name, stem)
+    display_name = infer_employee_display_name(stem, text)
+    calendar_tags = build_employee_calendar_tags(display_name, stem)
 
-        cand_profile = build_candidate_profile(text, project_profile)
+    cand_profile = build_candidate_profile(text, project_profile)
 
-        # Try to use LLM-computed percentage; fall back to simple overlap
-        skill_match_pct = cand_profile.get("skill_match_percent")
-        if skill_match_pct is None:
-            skill_match_pct = compute_skill_match(
-                project_profile.get("must_have_skills", []),
-                cand_profile.get("candidate_skills", []),
-            )
-        skillfit = float(skill_match_pct) / 100.0
+    # Use the LLM/pipeline-computed skill percentage directly
+    skill_match_pct = float(cand_profile.get("skill_match_percent", 0.0))
+    skillfit = skill_match_pct / 100.0
 
-        role_info = infer_resume_role(job_text, text)
+    role_info = infer_resume_role(job_text, text)
 
-        candidates.append(
-            {
-                "id": stem,
-                "display_name": display_name,
-                "calendar_tags": calendar_tags,
-                "fname": getattr(up, "name", stem),
-                "stem": stem,
-                "profile": cand_profile,
-                "role_bucket": role_info.get("bucket", "Out-of-scope"),
-                "role_title": role_info.get("role_title", "Unspecified role"),
-                "project_fit_summary": role_info.get("project_fit_summary", ""),
-                "unsuitable_reason": role_info.get("unsuitable_reason", ""),
-                "skillfit": skillfit,
-            }
-        )
+    candidates.append(
+        {
+            "id": stem,
+            "display_name": display_name,
+            "calendar_tags": calendar_tags,
+            "fname": getattr(up, "name", stem),
+            "stem": stem,
+            "profile": cand_profile,
+            "role_bucket": role_info.get("bucket", "Out-of-scope"),
+            "role_title": role_info.get("role_title", "Unspecified role"),
+            "project_fit_summary": role_info.get("project_fit_summary", ""),
+            "unsuitable_reason": role_info.get("unsuitable_reason", ""),
+            "skillfit": skillfit,
+        }
+    )
+
 
     # ----- Compute Readiscore + highlights -----
     results: List[Dict[str, Any]] = []
