@@ -437,7 +437,6 @@ def build_highlights_from_profiles(
 
     return highlights
 
-
 # ---------------------------------------------------------------------------
 # PDF report (clean layout + wrapped project title)
 # ---------------------------------------------------------------------------
@@ -453,36 +452,39 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     project_name = params.get("project_name") or ""
 
     def header():
-        """Top header: just the ReadiReport title + project name (no window line)."""
+        # Title with optional project byline
         title = "ReadiReport"
         if project_name:
             title = f"ReadiReport: {project_name}"
 
         c.setFont("Helvetica-Bold", 18)
-        max_width = 470  # printable width
+        max_width = 470  # printable width before it runs off the page
         y_title = h - 72
 
-        # Wrap long titles to multiple lines
+        # Split long titles across multiple lines
         words = title.split()
-        line_parts: List[str] = []
-        for word in words:
-            test_line = " ".join(line_parts + [word])
+        line: List[str] = []
+        for w_ in words:
+            test_line = " ".join(line + [w_])
             if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
-                line_parts.append(word)
+                line.append(w_)
             else:
-                c.drawString(72, y_title, " ".join(line_parts))
+                c.drawString(72, y_title, " ".join(line))
                 y_title -= 22
-                line_parts = [word]
-        if line_parts:
-            c.drawString(72, y_title, " ".join(line_parts))
-        # NOTE: we intentionally do NOT draw "Window / Workdays / Max hrs" anymore.
+                line = [w_]
+
+        # Draw last line
+        if line:
+            c.drawString(72, y_title, " ".join(line))
+
+        # No window / workday info here anymore; just leave space under title.
 
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
         lines: List[str] = []
         line: List[str] = []
         for w_ in words:
-            # +len(line) for spaces between words
+            # + len(line) for spaces between words
             if sum(len(w) for w in line) + len(line) + len(w_) > width_chars:
                 lines.append(" ".join(line))
                 line = [w_]
@@ -496,7 +498,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     header()
     y = h - 180  # a bit lower to account for wrapped titles
 
-    # Project window (one-time, narrative form) if you want to keep it:
+    # Project window (one-time, narrative form)
     project_window = (params.get("project_window") or "").strip()
     if project_window:
         c.setFont("Helvetica-Bold", 11)
@@ -601,7 +603,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         profile = r.get("profile") or {}
 
-        # Strengths and gaps list; trainable gaps can be annotated by your upstream logic
+        # Strengths and gaps list
         strengths = profile.get("strengths") or [
             h["skill"] for h in r.get("highlights", []) if h.get("met")
         ]
@@ -732,6 +734,8 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
     c.save()
     return buf.getvalue()
+
+
 
 
 # ---------------------------------------------------------------------------
