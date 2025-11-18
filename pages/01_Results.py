@@ -451,35 +451,36 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     project_name = params.get("project_name") or ""
 
     def header():
-    title = "ReadiReport"
-    if project_name:
-        title = f"ReadiReport: {project_name}"
+        """Top header: just the ReadiReport title + project name (no window line)."""
+        title = "ReadiReport"
+        if project_name:
+            title = f"ReadiReport: {project_name}"
 
-    c.setFont("Helvetica-Bold", 18)
-    max_width = 470
-    y_title = h - 72
+        c.setFont("Helvetica-Bold", 18)
+        max_width = 470  # printable width
+        y_title = h - 72
 
-    words = title.split()
-    line = []
-    for w_ in words:
-        test_line = " ".join(line + [w_])
-        if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
-            line.append(w_)
-        else:
-            c.drawString(72, y_title, " ".join(line))
-            y_title -= 22
-            line = [w_]
-    if line:
-        c.drawString(72, y_title, " ".join(line))
-
-    # 👇 NEW: do NOT draw the window / workday / max hours lines anymore
-    # This keeps the PDF clean and makes the Candidate name the next sub-header.
-
+        # Wrap long titles to multiple lines
+        words = title.split()
+        line_parts: List[str] = []
+        for word in words:
+            test_line = " ".join(line_parts + [word])
+            if c.stringWidth(test_line, "Helvetica-Bold", 18) <= max_width:
+                line_parts.append(word)
+            else:
+                c.drawString(72, y_title, " ".join(line_parts))
+                y_title -= 22
+                line_parts = [word]
+        if line_parts:
+            c.drawString(72, y_title, " ".join(line_parts))
+        # NOTE: we intentionally do NOT draw "Window / Workdays / Max hrs" anymore.
 
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
-        lines, line = [], []
+        lines: List[str] = []
+        line: List[str] = []
         for w_ in words:
+            # +len(line) for spaces between words
             if sum(len(w) for w in line) + len(line) + len(w_) > width_chars:
                 lines.append(" ".join(line))
                 line = [w_]
@@ -493,7 +494,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     header()
     y = h - 180  # a bit lower to account for wrapped titles
 
-    # Optional project window (once, in the summary)
+    # Project window (one-time, narrative form) if you want to keep it:
     project_window = (params.get("project_window") or "").strip()
     if project_window:
         c.setFont("Helvetica-Bold", 11)
@@ -510,7 +511,7 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             y -= 14
         y -= 10
 
-    # Project summary (already includes company-level context in P2)
+    # Project summary
     proj_summary = (params.get("project_summary") or "").strip()
     if proj_summary:
         c.setFont("Helvetica-Bold", 12)
@@ -534,9 +535,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             y -= 8
 
         y -= 10
-
-    # NOTE: company_requirements block removed on purpose –
-    # they are already baked into the narrative summary above.
 
     # Role mix
     role_mix = params.get("role_mix") or {}
@@ -572,13 +570,18 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         header()
         y = h - 130
 
+        # Candidate header
         c.setFont("Helvetica-Bold", 12)
         display_name = r.get("display_name") or format_employee_label(r["emp_id"])
         c.drawString(72, y, f"Candidate: {display_name}")
         y -= 18
 
         c.setFont("Helvetica", 10)
-        c.drawString(72, y, f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})")
+        c.drawString(
+            72,
+            y,
+            f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})",
+        )
         y -= 14
         c.drawString(
             72,
@@ -596,12 +599,26 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
         profile = r.get("profile") or {}
 
+        # Strengths and gaps list; trainable gaps can be annotated by your upstream logic
         strengths = profile.get("strengths") or [
             h["skill"] for h in r.get("highlights", []) if h.get("met")
         ]
-        gaps = profile.get("gaps") or [
-            h["skill"] for h in r.get("highlights", []) if not h.get("met")
+        gaps_raw = profile.get("gaps") or [
+            h for h in r.get("highlights", []) if not h.get("met")
         ]
+
+        # Normalize gaps to strings, with "(trainable)" tag when marked as such
+        gaps: List[str] = []
+        for g in gaps_raw:
+            if isinstance(g, dict):
+                label = str(g.get("skill") or g.get("label") or "")
+                if not label:
+                    continue
+                if g.get("trainable"):
+                    label = f"{label} (trainable / can be learned before NTP)"
+                gaps.append(label)
+            else:
+                gaps.append(str(g))
 
         # Strengths
         c.setFont("Helvetica-Bold", 11)
@@ -713,7 +730,6 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
 
     c.save()
     return buf.getvalue()
-
 
 
 # ---------------------------------------------------------------------------
