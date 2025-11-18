@@ -282,46 +282,49 @@ Return ONLY a valid JSON object with exactly these keys:
     return profile
 
 # ---------------------------------------------------------------------------
-# Minimal resume skill extractor (no external backend.skills_backend needed)
-# ---------------------------------------------------------------------------
-
-def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
-    """
-    Lightweight, non-LLM skill extractor used by the TeamReadi pipeline.
-
-    Returns a dict with:
-      - candidate_summary: short plain-text blurb
-      - raw_skills: list of text snippets we treat as 'skills'
-    """
-    text = (resume_text or "").strip()
-    if not text:
-        return {"candidate_summary": "", "raw_skills": []}
-
-    # Simple summary: first ~400 characters with whitespace collapsed
-    cleaned = " ".join(text.split())
-    candidate_summary = cleaned[:400]
-
-    # Very crude "skills": non-empty lines / bullet points
-    raw_skills: List[str] = []
-    for line in resume_text.splitlines():
-        line = line.strip(" \t•-*–")
-        if not line:
-            continue
-        if len(line) < 3:
-            continue
-        raw_skills.append(line)
-
-    if not raw_skills:
-        raw_skills = [cleaned]
-
-    return {"candidate_summary": candidate_summary, "raw_skills": raw_skills}
-
-# ---------------------------------------------------------------------------
 # Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
-from typing import Dict, Any, List, Optional
-import json
+from typing import List, Optional  # Dict / Any already imported above
+import json                       # already imported above; harmless to repeat
+
+
+def _extract_resume_skills_fallback(resume_text: str) -> Dict[str, Any]:
+    """
+    Very simple inline resume/skills extractor so we don't depend on
+    backend.skills_backend (which is currently failing to import).
+
+    Returns a dict:
+        {
+          "candidate_summary": short text summary,
+          "raw_skills": [list of 'skills' strings]
+        }
+
+    For now we treat each non-empty line of the resume as a potential
+    skill phrase and deduplicate them.
+    """
+    text = resume_text or ""
+
+    # Split into non-empty lines, trim bullets and whitespace
+    lines = [ln.strip(" •-\t\r") for ln in text.splitlines() if ln.strip()]
+
+    seen: set[str] = set()
+    skills: List[str] = []
+    for ln in lines:
+        low = ln.lower()
+        # keep reasonably sized lines only, and dedupe
+        if 3 <= len(ln) <= 120 and low not in seen:
+            seen.add(low)
+            skills.append(ln)
+
+    summary = " ".join(lines)
+    if len(summary) > 400:
+        summary = summary[:400] + "..."
+
+    return {
+        "candidate_summary": summary,
+        "raw_skills": skills,
+    }
 
 
 def build_candidate_profile(
@@ -332,7 +335,7 @@ def build_candidate_profile(
     SECOND STAGE: compare resume skills to the project profile.
 
     Pipeline:
-      1) Call extract_resume_skills() to get a grounded list of skills.
+      1) Call _extract_resume_skills_fallback() to get a grounded list of skills.
       2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
       3) Ask it to decide which project must-haves are met vs missing, and to
          write strengths/gaps WITHOUT inventing new skills.
@@ -343,8 +346,8 @@ def build_candidate_profile(
         but they do NOT count as missing must-have skills and they do NOT
         reduce the skill_match_percent.
     """
-    # Extract structured skills from the raw resume text
-    base = extract_resume_skills(resume_text)
+    # NOTE: We use the inline fallback now instead of backend.skills_backend
+    base = _extract_resume_skills_fallback(resume_text)
     candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
 
@@ -428,14 +431,13 @@ Return ONLY a JSON object with keys:
     strengths = _norm_list("strengths")
     gaps = _norm_list("gaps")
 
-    # Deterministic skill-match percentage based only on strict must-have list.
-    # We let compute_skill_match use the *full* candidate_skills overlap,
-    # not just the LLM's matched_must_have_skills bucket, so the percentage
-    # reflects overall resume content instead of only 2–3 highlighted items.
+    # Deterministic skill-match percentage based only on strict must-have list
+    # and the matched_must_have_skills bucket. TRAINABLE items do not affect this.
     strict_must = [s for s in must if s not in trainable]
     skill_match_percent = compute_skill_match(
         strict_must,
         raw_skills,
+        matched_must_have_skills=matched,
     )
 
     profile: Dict[str, Any] = {
@@ -480,7 +482,43 @@ def compute_skill_match(
         ]
         return 100.0 * len(matched_clean) / len(must)
 
-    # Case 2: simple overlap fallback based on all candidate skills
+    # Case 2: simple overlap fallback
+    cand = {str(s).strip().lower() for s in (candidate_skills or []) if str(s).strip()}
+    matched_count = sum(1 for m in must if m in cand)
+    return 100.0 * matched_count / len(must)
+
+
+# ---------------------------------------------------------------------------
+# Low-level skill matching helper
+# ---------------------------------------------------------------------------
+
+def compute_skill_match(
+    must_have_skills: List[str],
+    candidate_skills: List[str],
+    matched_must_have_skills: Optional[List[str]] = None,
+) -> float:
+    """
+    Return a 0–100 percentage of how many must_have_skills are clearly met.
+
+    If matched_must_have_skills is provided (from the LLM), we trust that list
+    and compute the score from it. Otherwise we fall back to a simple overlap
+    between normalized text in must_have_skills and candidate_skills.
+    """
+    # Normalize must-have list
+    must = [str(s).strip().lower() for s in (must_have_skills or []) if str(s).strip()]
+    if not must:
+        return 0.0
+
+    # Case 1: LLM gave us an explicit matched_must_have_skills bucket
+    if matched_must_have_skills is not None:
+        matched_clean = [
+            str(s).strip().lower()
+            for s in (matched_must_have_skills or [])
+            if str(s).strip()
+        ]
+        return 100.0 * len(matched_clean) / len(must)
+
+    # Case 2: simple overlap fallback
     cand = {str(s).strip().lower() for s in (candidate_skills or []) if str(s).strip()}
     matched_count = sum(1 for m in must if m in cand)
     return 100.0 * matched_count / len(must)
