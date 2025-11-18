@@ -306,11 +306,9 @@ def build_candidate_profile(
       - project_profile['trainable_requirements'] is passed separately.
       - Trainable items may be mentioned as "will need to learn X" style gaps,
         but they do NOT count as missing must-have skills and they do NOT
-        reduce the strict must-have score.
-      - We compute TWO scores:
-          * strict_skill_match_percent: coverage of strict must-haves only
-          * skill_match_percent: broader score vs must + nice-to-haves
+        reduce the skill_match_percent.
     """
+    # Extract structured skills from the raw resume text
     base = extract_resume_skills(resume_text)
     candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
@@ -395,21 +393,14 @@ Return ONLY a JSON object with keys:
     strengths = _norm_list("strengths")
     gaps = _norm_list("gaps")
 
-    # ---- 1) STRICT score: only true must-have skills (what you see in Highlights) ----
+    # Deterministic skill-match percentage based only on strict must-have list.
+    # We let compute_skill_match use the *full* candidate_skills overlap,
+    # not just the LLM's matched_must_have_skills bucket, so the percentage
+    # reflects overall resume content instead of only 2–3 highlighted items.
     strict_must = [s for s in must if s not in trainable]
-    strict_skill_match_percent = compute_skill_match(
+    skill_match_percent = compute_skill_match(
         strict_must,
         raw_skills,
-        matched_must_have_skills=matched,
-    )
-
-    # ---- 2) BROADER score: overall fit vs must + nice (what you want on the tiles) ----
-    # We ignore trainable items completely here; they don't help or hurt.
-    overall_targets = [s for s in (must + nice) if s not in trainable]
-    overall_skill_match_percent = compute_skill_match(
-        overall_targets,
-        raw_skills,
-        matched_must_have_skills=None,  # use simple overlap, not only LLM list
     )
 
     profile: Dict[str, Any] = {
@@ -419,10 +410,7 @@ Return ONLY a JSON object with keys:
         "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
-        # This is the MAIN score the rest of the app uses (0–100)
-        "skill_match_percent": overall_skill_match_percent,
-        # This keeps the stricter must-have score around for PDF / diagnostics
-        "strict_skill_match_percent": strict_skill_match_percent,
+        "skill_match_percent": skill_match_percent,
     }
     return profile
 
@@ -457,9 +445,7 @@ def compute_skill_match(
         ]
         return 100.0 * len(matched_clean) / len(must)
 
-    # Case 2: simple overlap fallback
+    # Case 2: simple overlap fallback based on all candidate skills
     cand = {str(s).strip().lower() for s in (candidate_skills or []) if str(s).strip()}
     matched_count = sum(1 for m in must if m in cand)
     return 100.0 * matched_count / len(must)
-
-
