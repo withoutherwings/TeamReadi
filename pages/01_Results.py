@@ -580,12 +580,15 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         c.drawString(72, y, f"Candidate: {display_name}")
         y -= 18
 
+        score = float(r.get("readiscore", 0.0) or 0.0)
+
         c.setFont("Helvetica", 10)
         c.drawString(
             72,
             y,
-            f"ReadiScore: {int(r['readiscore']*100)}%   (Rank #{idx})",
+            f"ReadiScore: {int(score * 100)}%   (Rank #{idx})",
         )
+
         y -= 14
         c.drawString(
             72,
@@ -593,12 +596,16 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
             f"Ideal Fit: {r.get('role_title','')}   Bucket: {r.get('role_bucket','')}",
         )
         y -= 14
+        skillfit = float(r.get("skillfit", 0.0) or 0.0)
+        hours = float(r.get("hours", 0.0) or 0.0)
+
         c.drawString(
             72,
             y,
-            f"Skill match: {int(r['skillfit']*100)}%   Availability: {r['hours']} hrs "
-            f"({int((r['hours']/window_baseline)*100)}% of window capacity)",
+            f"Skill match: {int(skillfit * 100)}%   Availability: {int(hours)} hrs "
+            f"({int((hours / window_baseline) * 100)}% of window capacity)",
         )
+
         y -= 22
 
         profile = r.get("profile") or {}
