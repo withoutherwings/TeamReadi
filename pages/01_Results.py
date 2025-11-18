@@ -841,7 +841,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
                 "skillfit": skillfit,
             }
         )
-
+        return candidates, project_profile, window_baseline, project_name
 
     # ----- Compute Readiscore + highlights -----
     results: List[Dict[str, Any]] = []
