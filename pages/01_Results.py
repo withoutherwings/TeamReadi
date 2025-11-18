@@ -876,7 +876,6 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
 
     return results, project_profile, window_baseline, project_name
 
-
 # ---------------------------------------------------------------------------
 # Render results (bucketed tiles)
 # ---------------------------------------------------------------------------
@@ -900,6 +899,7 @@ bucket_labels = {
     "Out-of-scope": "Out-of-scope / Non-target Roles",
 }
 
+# Group results by bucket
 grouped: Dict[str, List[Dict[str, Any]]] = {b: [] for b in BUCKET_ORDER}
 for r in results:
     b = r.get("role_bucket", "Out-of-scope")
@@ -908,6 +908,7 @@ for r in results:
     else:
         grouped[b].append(r)
 
+# Render each bucket as a row of cards
 for b in BUCKET_ORDER:
     group = grouped[b]
     if not group:
@@ -921,9 +922,9 @@ for b in BUCKET_ORDER:
         with col:
             display_name = r.get("display_name") or format_employee_label(r["emp_id"])
 
-            # Build highlight lines with ✓ / ⚠ / ❌
+            # Build highlight lines with ✅ / ⚠️ / ❌
             hl = r.get("highlights", [])
-            lines = []
+            lines: List[str] = []
             for h in hl:
                 status = h.get("status")
                 if status == "yes":
@@ -938,7 +939,8 @@ for b in BUCKET_ORDER:
                 if lines
                 else "No specific highlights identified yet."
             )
-             st.markdown(
+
+            st.markdown(
                 f"""
 <div class="teamreadi-card" style="
   background-color:#082A4C;
@@ -1020,6 +1022,8 @@ for b in BUCKET_ORDER:
 """,
                 unsafe_allow_html=True,
             )
+
+
 # ---------------------------------------------------------------------------
 # PDF + bottom buttons
 # ---------------------------------------------------------------------------
