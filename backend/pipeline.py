@@ -337,16 +337,21 @@ def build_candidate_profile(
     Pipeline:
       1) Call _extract_resume_skills_fallback() to get a grounded list of skills.
       2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
-      3) Ask it to decide which project must-haves are met vs missing, and to
-         write strengths/gaps WITHOUT inventing new skills.
+      3) Ask it to decide which project must-haves are:
+           - clearly matched,
+           - partially supported,
+           - clearly missing,
+         and to write strengths/gaps WITHOUT inventing new skills.
 
     NEW:
       - project_profile['trainable_requirements'] is passed separately.
       - Trainable items may be mentioned as "will need to learn X" style gaps,
         but they do NOT count as missing must-have skills and they do NOT
         reduce the skill_match_percent.
+      - We also use partial matches with half-credit in the skill match score
+        so you get more variety than just 0% / 33% / 67% / 100%.
     """
-    # NOTE: We use the inline fallback now instead of backend.skills_backend
+    # 1) Parse resume into a grounded list of skill phrases
     base = _extract_resume_skills_fallback(resume_text)
     candidate_summary = base["candidate_summary"]
     raw_skills = base["raw_skills"]
@@ -373,18 +378,18 @@ CANDIDATE SKILLS (derived directly from the resume and MUST NOT be changed):
 
 Your tasks:
 
-1. Decide which project MUST-HAVE skills are clearly supported by the
-   candidate skills. Treat a must-have as "matched" only if there is a direct
-   or very close semantic match in CANDIDATE SKILLS.
+1. Decide which project MUST-HAVE skills are supported by the
+   candidate skills. For each must-have, choose exactly one bucket:
+   - "matched_must_have_skills": clearly supported by the candidate skills.
+   - "partial_must_have_skills": somewhat or indirectly supported
+      (e.g., related experience or partial exposure, but not a full match).
+   - "missing_must_have_skills": not clearly supported by any candidate skill.
 
-2. Build two lists ONLY for the strict must-have skills (NOT for trainable items):
-   - "matched_must_have_skills": project must-have phrases that ARE supported.
-   - "missing_must_have_skills": project must-have phrases that are NOT clearly
-     supported.
+   Do NOT include items from the TRAINABLE list in any of these three lists.
+   Trainable items are tracked separately and do NOT count as missing
+   must-have skills.
 
-   Do NOT include items from the TRAINABLE list in either of these lists.
-
-3. Write:
+2. Write:
    - "strengths": 3–6 short bullet phrases (max ~15 words each) describing
      this candidate's BEST strengths for THIS project.
    - "gaps": 3–6 short bullet phrases describing the most important weaknesses
@@ -408,6 +413,7 @@ Important rules:
 
 Return ONLY a JSON object with keys:
   "matched_must_have_skills"
+  "partial_must_have_skills"
   "missing_must_have_skills"
   "strengths"
   "gaps"
@@ -427,29 +433,44 @@ Return ONLY a JSON object with keys:
         return out
 
     matched = _norm_list("matched_must_have_skills")
+    partial = _norm_list("partial_must_have_skills")
     missing = _norm_list("missing_must_have_skills")
     strengths = _norm_list("strengths")
     gaps = _norm_list("gaps")
 
     # Deterministic skill-match percentage based only on strict must-have list
-    # and the matched_must_have_skills bucket. TRAINABLE items do not affect this.
+    # and the matched/partial buckets. TRAINABLE items do not affect this.
     strict_must = [s for s in must if s not in trainable]
-    skill_match_percent = compute_skill_match(
-        strict_must,
-        raw_skills,
-        matched_must_have_skills=matched,
-    )
+    if strict_must:
+        full_count = len(strict_must)
+
+        # We only give credit for must-have items, not trainable extras.
+        # Full credit for matched, half credit for partials.
+        matched_count = len(matched)
+        partial_count = len(partial)
+
+        score = 100.0 * (matched_count + 0.5 * partial_count) / full_count
+        # keep within [0, 100]
+        if score < 0:
+            score = 0.0
+        if score > 100:
+            score = 100.0
+        skill_match_percent = score
+    else:
+        skill_match_percent = 0.0
 
     profile: Dict[str, Any] = {
         "candidate_summary": candidate_summary,
         "candidate_skills": raw_skills,
         "matched_must_have_skills": matched,
+        "partial_must_have_skills": partial,
         "missing_must_have_skills": missing,
         "strengths": strengths,
         "gaps": gaps,
         "skill_match_percent": skill_match_percent,
     }
     return profile
+
 
 
 # ---------------------------------------------------------------------------
