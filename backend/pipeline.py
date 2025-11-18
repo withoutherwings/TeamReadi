@@ -12,7 +12,6 @@ import json
 from typing import Dict, List, Any, Set, Optional
 
 from openai import OpenAI
-from backend.skills_backend import extract_resume_skills
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +280,41 @@ Return ONLY a valid JSON object with exactly these keys:
         "role_mix_by_bucket": data.get("role_mix_by_bucket") or {},
     }
     return profile
+
+# ---------------------------------------------------------------------------
+# Minimal resume skill extractor (no external backend.skills_backend needed)
+# ---------------------------------------------------------------------------
+
+def extract_resume_skills(resume_text: str) -> Dict[str, Any]:
+    """
+    Lightweight, non-LLM skill extractor used by the TeamReadi pipeline.
+
+    Returns a dict with:
+      - candidate_summary: short plain-text blurb
+      - raw_skills: list of text snippets we treat as 'skills'
+    """
+    text = (resume_text or "").strip()
+    if not text:
+        return {"candidate_summary": "", "raw_skills": []}
+
+    # Simple summary: first ~400 characters with whitespace collapsed
+    cleaned = " ".join(text.split())
+    candidate_summary = cleaned[:400]
+
+    # Very crude "skills": non-empty lines / bullet points
+    raw_skills: List[str] = []
+    for line in resume_text.splitlines():
+        line = line.strip(" \t•-*–")
+        if not line:
+            continue
+        if len(line) < 3:
+            continue
+        raw_skills.append(line)
+
+    if not raw_skills:
+        raw_skills = [cleaned]
+
+    return {"candidate_summary": candidate_summary, "raw_skills": raw_skills}
 
 # ---------------------------------------------------------------------------
 # Candidate profiling & skill matching
