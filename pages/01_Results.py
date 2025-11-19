@@ -9,21 +9,12 @@ import fitz                    # PyMuPDF
 import base64
 import pathlib
 
-# Path to the repo root
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-
-def load_base64(rel_path: str) -> str:
-    file_path = ROOT / rel_path
-    with open(file_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
-
-WORKER_ICON = load_base64("assets/worker_icon.png")
-
 from docx import Document
 from icalendar import Calendar
 from dateutil.tz import UTC
 from bs4 import BeautifulSoup
 from streamlit_extras.switch_page_button import switch_page
+
 from backend.roles_backend import infer_resume_role
 from backend.pipeline import (
     build_project_profile,
@@ -31,10 +22,20 @@ from backend.pipeline import (
     compute_skill_match,
 )
 
-
-
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
+
+# Path to the repo root
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def load_base64(rel_path: str) -> str:
+    file_path = ROOT / rel_path
+    with open(file_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+WORKER_ICON = load_base64("assets/worker_icon.png")
 
 # Make sure page config is set once, at the top
 st.set_page_config(page_title="TeamReadi — Results", layout="wide")
@@ -58,11 +59,10 @@ div[data-testid="column"] {
     unsafe_allow_html=True,
 )
 
-
-
 # ---------------------------------------------------------------------------
 # Label / ID helpers
 # ---------------------------------------------------------------------------
+
 
 def format_employee_label(raw_id: str) -> str:
     """
@@ -136,8 +136,6 @@ def build_employee_calendar_tags(display_name: str, stem: str) -> List[str]:
 
     return sorted(tags)
 
-
-
 # ---------------------------------------------------------------------------
 # Session / params
 # ---------------------------------------------------------------------------
@@ -182,10 +180,10 @@ workdays_l = st.session_state["workdays"]
 max_hours = st.session_state["max_hours"]
 alpha = st.session_state["alpha"] or 0.7
 
-
 # ---------------------------------------------------------------------------
 # Text extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def extract_text_from_pdf_bytes(file_bytes: bytes) -> str:
     text = []
@@ -244,10 +242,10 @@ def read_text_from_url(url: str) -> str:
     soup = BeautifulSoup(r.text, "html.parser")
     return soup.get_text(separator="\n")
 
+# ---------------------------------------------------------------------------
+# Calendar & availability helpers
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Calendar & availability helpers (CALENDAR = 18 style)
-# ---------------------------------------------------------------------------
 
 def busy_blocks_from_ics_for_employee(
     ics_bytes: bytes,
@@ -356,62 +354,66 @@ def remaining_hours_for_employee(
     busy_hours = busy_secs / 3600.0
     return max(0, int(round(baseline - busy_hours)))
 
+# ---------------------------------------------------------------------------
+# Highlights builder — now person-specific (strengths + gaps)
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Highlights builder (trust LLM's matched/missing lists)
-# ---------------------------------------------------------------------------
 
 def build_highlights_from_profiles(
     project_profile: Dict[str, Any],
     candidate_profile: Dict[str, Any],
-    max_items: int = 5,
+    max_items: int = 3,
 ) -> List[Dict[str, Any]]:
     """
     Build a small list of highlights for the tiles.
 
-    Uses the candidate_profile buckets:
-      - matched_must_have_skills  -> status="yes"  (✅)
-      - partial_must_have_skills  -> status="maybe" (⚠️)
-      - missing_must_have_skills  -> status="no"   (❌)
+    NEW BEHAVIOR:
+      - Use the candidate's narrative strengths/gaps so each card reads as
+        "top reasons THIS person is (or isn't) a fit", not a rigid checklist.
+      - Still produce structured dicts so the PDF can fall back if needed.
 
-    Falls back to simple overlap if those lists are missing.
+    Rules:
+      - Prefer up to `max_items` strengths first.
+      - If there are remaining slots, fill with gaps.
+      - If we have neither strengths nor gaps (LLM failed), fall back to a
+        simple must-have vs candidate_skills overlap like before.
     """
-    matched = [
+    strengths = [
         str(s).strip()
-        for s in candidate_profile.get("matched_must_have_skills") or []
+        for s in (candidate_profile.get("strengths") or [])
         if str(s).strip()
     ]
-    partial = [
-        str(s).strip()
-        for s in candidate_profile.get("partial_must_have_skills") or []
-        if str(s).strip()
-    ]
-    missing = [
-        str(s).strip()
-        for s in candidate_profile.get("missing_must_have_skills") or []
-        if str(s).strip()
+    gaps = [
+        str(g).strip()
+        for g in (candidate_profile.get("gaps") or [])
+        if str(g).strip()
     ]
 
     highlights: List[Dict[str, Any]] = []
 
-    # Prefer the explicit buckets if we have any signal
-    if matched or partial or missing:
-        for label in matched:
-            if len(highlights) >= max_items:
-                break
-            highlights.append({"skill": label, "status": "yes", "met": True})
-        for label in partial:
-            if len(highlights) >= max_items:
-                break
-            highlights.append({"skill": label, "status": "maybe", "met": False})
-        for label in missing:
-            if len(highlights) >= max_items:
-                break
-            highlights.append({"skill": label, "status": "no", "met": False})
-        if highlights:
-            return highlights
+    # Prefer strengths first
+    slots = max_items
+    for s in strengths[:slots]:
+        highlights.append(
+            {"skill": s, "status": "yes", "met": True}
+        )
+    slots = max_items - len(highlights)
 
-    # Fallback: simple overlap between project must-haves and candidate_skills
+    # Then gaps (soft vs hard flag based on wording)
+    if slots > 0:
+        for g in gaps[:slots]:
+            low = g.lower()
+            soft = any(word in low for word in ["learn", "support", "training", "orient"])
+            status = "maybe" if soft else "no"
+            highlights.append(
+                {"skill": g, "status": status, "met": False}
+            )
+
+    # If we got anything from strengths/gaps, we're done.
+    if highlights:
+        return highlights
+
+    # ---- Fallback: simple overlap between project must-haves and candidate_skills
     proj_must = [
         str(x).strip()
         for x in project_profile.get("must_have_skills", [])
@@ -441,8 +443,6 @@ def build_highlights_from_profiles(
 # PDF report (clean layout + wrapped project title)
 # ---------------------------------------------------------------------------
 
-from reportlab.lib.pagesizes import LETTER
-from reportlab.pdfgen import canvas
 
 def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     buf = io.BytesIO()
@@ -477,14 +477,11 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
         if line:
             c.drawString(72, y_title, " ".join(line))
 
-        # No window / workday info here anymore; just leave space under title.
-
     def wrap_text(text: str, width_chars: int = 92) -> List[str]:
         words = (text or "").split()
         lines: List[str] = []
         line: List[str] = []
         for w_ in words:
-            # + len(line) for spaces between words
             if sum(len(w) for w in line) + len(line) + len(w_) > width_chars:
                 lines.append(" ".join(line))
                 line = [w_]
@@ -735,12 +732,10 @@ def build_pdf(results: List[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     c.save()
     return buf.getvalue()
 
-
-
-
 # ---------------------------------------------------------------------------
 # Main pipeline for results page
 # ---------------------------------------------------------------------------
+
 
 def fetch_ics_bytes(url: str) -> bytes:
     if not url:
@@ -751,6 +746,33 @@ def fetch_ics_bytes(url: str) -> bytes:
         return r.content
     except Exception:
         return b""
+
+
+def infer_project_name_from_inputs(req_files, req_url: str, job_text: str) -> str:
+    """
+    Very light heuristic fallback if LLM does not give project_name.
+    """
+    # 1: use first file name if present
+    if req_files:
+        first = req_files[0]
+        name = getattr(first, "name", "") or getattr(first, "filename", "")
+        if name:
+            name = filename_stem(name)
+            return name
+
+    # 2: use last part of URL if present
+    if req_url:
+        base = os.path.basename(req_url.rstrip("/"))
+        if base:
+            return filename_stem(base)
+
+    # 3: crude fallback from job_text
+    for line in (job_text or "").splitlines():
+        line = line.strip()
+        if len(line) > 10 and len(line) < 120:
+            return line
+    return "Unnamed Project"
+
 
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
@@ -821,7 +843,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
 
         cand_profile = build_candidate_profile(text, project_profile)
 
-        # Try to use LLM-computed percentage; fall back to simple overlap
+        # Prefer LLM-computed percentage; fall back to simple overlap if missing
         skill_match_pct = cand_profile.get("skill_match_percent")
         if skill_match_pct is None:
             skill_match_pct = compute_skill_match(
@@ -859,7 +881,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
         highlights = build_highlights_from_profiles(
             project_profile,
             c["profile"],
-            max_items=5,
+            max_items=3,
         )
 
         results.append(
@@ -1058,8 +1080,6 @@ st.download_button(
     file_name="teamreadi_results.pdf",
     mime="application/pdf",
 )
-
-from streamlit_extras.switch_page_button import switch_page
 
 # ---- Return to Start ----
 if st.button("Return to Start"):
