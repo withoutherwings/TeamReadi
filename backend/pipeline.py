@@ -1,4 +1,5 @@
-"""TeamReadi backend pipeline.
+"""
+TeamReadi backend pipeline.
 
 LLM-powered helpers:
 
@@ -12,7 +13,6 @@ import json
 from typing import Dict, List, Any, Set, Optional
 
 from openai import OpenAI
-
 
 # ---------------------------------------------------------------------------
 # Global config
@@ -113,8 +113,6 @@ def _split_person_vs_company(requirements) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 # Project profile
 # ---------------------------------------------------------------------------
-
-from typing import Dict, Any  # keep this near the top of the file too
 
 
 def build_project_profile(job_text: str) -> Dict[str, Any]:
@@ -285,14 +283,11 @@ Return ONLY a valid JSON object with exactly these keys:
 # Candidate profiling & skill matching
 # ---------------------------------------------------------------------------
 
-from typing import List, Optional  # Dict / Any already imported above
-import json                       # already imported above; harmless to repeat
-
 
 def _extract_resume_skills_fallback(resume_text: str) -> Dict[str, Any]:
     """
     Very simple inline resume/skills extractor so we don't depend on
-    backend.skills_backend (which is currently failing to import).
+    backend.skills_backend.
 
     Returns a dict:
         {
@@ -334,22 +329,29 @@ def build_candidate_profile(
     """
     SECOND STAGE: compare resume skills to the project profile.
 
-    Pipeline:
-      1) Call _extract_resume_skills_fallback() to get a grounded list of skills.
-      2) Show ONLY those skills + the project must/nice-to-have lists to the LLM.
-      3) Ask it to decide which project must-haves are:
-           - clearly matched,
-           - partially supported,
-           - clearly missing,
-         and to write strengths/gaps WITHOUT inventing new skills.
+    What this does (high level):
 
-    NEW:
-      - project_profile['trainable_requirements'] is passed separately.
-      - Trainable items may be mentioned as "will need to learn X" style gaps,
-        but they do NOT count as missing must-have skills and they do NOT
-        reduce the skill_match_percent.
-      - We also use partial matches with half-credit in the skill match score
-        so you get more variety than just 0% / 33% / 67% / 100%.
+      1) Use _extract_resume_skills_fallback() to get a grounded list of resume
+         skill phrases (no hallucinated skills).
+      2) Give the LLM ONLY:
+           - project must-have skills,
+           - project nice-to-have skills,
+           - trainable requirements,
+           - the extracted resume skills.
+      3) Ask it to bucket BOTH must-haves and nice-to-haves into:
+           - matched,
+           - partial,
+           - missing.
+      4) Ask it for narrative-strength "strengths" and "gaps" bullets that read
+         like reasons one specific person *is or isn't* a fit for THIS job.
+      5) Compute a weighted skill_match_percent that:
+           - gives full + half credit for must-haves,
+           - gives half + quarter credit for nice-to-haves,
+           - NEVER penalizes for trainable items.
+
+    The tiles then:
+      - show a narrative snapshot (strengths/gaps),
+      - use the numeric score for ranking.
     """
     # 1) Parse resume into a grounded list of skill phrases
     base = _extract_resume_skills_fallback(resume_text)
@@ -378,18 +380,22 @@ CANDIDATE SKILLS (derived directly from the resume and MUST NOT be changed):
 
 Your tasks:
 
-1. Decide which project MUST-HAVE skills are supported by the
-   candidate skills. For each must-have, choose exactly one bucket:
+1. For EACH project MUST-HAVE skill, decide exactly one bucket:
    - "matched_must_have_skills": clearly supported by the candidate skills.
    - "partial_must_have_skills": somewhat or indirectly supported
-      (e.g., related experience or partial exposure, but not a full match).
+      (related experience or partial exposure, but not a full match).
    - "missing_must_have_skills": not clearly supported by any candidate skill.
 
-   Do NOT include items from the TRAINABLE list in any of these three lists.
-   Trainable items are tracked separately and do NOT count as missing
-   must-have skills.
+2. For EACH project NICE-TO-HAVE skill, decide exactly one bucket:
+   - "matched_nice_to_have_skills": clearly supported by the candidate skills.
+   - "partial_nice_to_have_skills": somewhat or indirectly supported.
+   - "missing_nice_to_have_skills": not clearly supported.
 
-2. Write:
+   Do NOT copy any items from the TRAINABLE list into these buckets.
+   Trainable items are tracked separately and do NOT count as missing must-have
+   skills.
+
+3. Write:
    - "strengths": 3–6 short bullet phrases (max ~15 words each) describing
      this candidate's BEST strengths for THIS project.
    - "gaps": 3–6 short bullet phrases describing the most important weaknesses
@@ -415,6 +421,9 @@ Return ONLY a JSON object with keys:
   "matched_must_have_skills"
   "partial_must_have_skills"
   "missing_must_have_skills"
+  "matched_nice_to_have_skills"
+  "partial_nice_to_have_skills"
+  "missing_nice_to_have_skills"
   "strengths"
   "gaps"
 """
@@ -432,39 +441,59 @@ Return ONLY a JSON object with keys:
                 out.append(s)
         return out
 
-    matched = _norm_list("matched_must_have_skills")
-    partial = _norm_list("partial_must_have_skills")
-    missing = _norm_list("missing_must_have_skills")
+    # Buckets coming back from the LLM
+    matched_must = _norm_list("matched_must_have_skills")
+    partial_must = _norm_list("partial_must_have_skills")
+    missing_must = _norm_list("missing_must_have_skills")
+
+    matched_nice = _norm_list("matched_nice_to_have_skills")
+    partial_nice = _norm_list("partial_nice_to_have_skills")
+    missing_nice = _norm_list("missing_nice_to_have_skills")
+
     strengths = _norm_list("strengths")
     gaps = _norm_list("gaps")
 
-    # Deterministic skill-match percentage based only on strict must-have list
-    # and the matched/partial buckets. TRAINABLE items do not affect this.
+    # ---- Compute weighted skill_match_percent ----
+    # Only person-level must/nice feed the score; trainable items do not.
     strict_must = [s for s in must if s not in trainable]
-    if strict_must:
-        full_count = len(strict_must)
+    nice_list = [s for s in nice if s not in trainable]
 
-        # We only give credit for must-have items, not trainable extras.
-        # Full credit for matched, half credit for partials.
-        matched_count = len(matched)
-        partial_count = len(partial)
+    # Denominator: must-haves full weight, nice-to-haves half weight
+    denom = float(len(strict_must) + 0.5 * len(nice_list))
+    if denom <= 0:
+        skill_match_percent = 0.0
+    else:
+        # Full credit for matched must-haves, half credit for partial must-haves
+        must_score = 1.0 * len(matched_must) + 0.5 * len(partial_must)
 
-        score = 100.0 * (matched_count + 0.5 * partial_count) / full_count
-        # keep within [0, 100]
+        # Nice-to-haves: half weight overall
+        #   full match = 0.5, partial = 0.25
+        nice_score = 0.5 * len(matched_nice) + 0.25 * len(partial_nice)
+
+        raw_score = must_score + nice_score
+        score = 100.0 * raw_score / denom
+        # Clamp to [0, 100]
         if score < 0:
             score = 0.0
         if score > 100:
             score = 100.0
         skill_match_percent = score
-    else:
-        skill_match_percent = 0.0
 
     profile: Dict[str, Any] = {
         "candidate_summary": candidate_summary,
         "candidate_skills": raw_skills,
-        "matched_must_have_skills": matched,
-        "partial_must_have_skills": partial,
-        "missing_must_have_skills": missing,
+
+        # Must-have buckets (used by highlight builder / PDF if needed)
+        "matched_must_have_skills": matched_must,
+        "partial_must_have_skills": partial_must,
+        "missing_must_have_skills": missing_must,
+
+        # Nice-to-have buckets (used for scoring; available if you want later)
+        "matched_nice_to_have_skills": matched_nice,
+        "partial_nice_to_have_skills": partial_nice,
+        "missing_nice_to_have_skills": missing_nice,
+
+        # Narrative, person-specific bullets
         "strengths": strengths,
         "gaps": gaps,
         "skill_match_percent": skill_match_percent,
@@ -472,9 +501,8 @@ Return ONLY a JSON object with keys:
     return profile
 
 
-
 # ---------------------------------------------------------------------------
-# Low-level skill matching helper
+# Low-level skill matching helper (still available as a fallback)
 # ---------------------------------------------------------------------------
 
 def compute_skill_match(
