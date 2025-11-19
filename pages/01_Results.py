@@ -8,6 +8,7 @@ import streamlit as st
 import fitz                    # PyMuPDF
 import base64
 import pathlib
+import streamlit.components.v1 as components
 
 from docx import Document
 from icalendar import Calendar
@@ -1123,7 +1124,12 @@ st.download_button(
 
 # ---- Return to Start ----
 if st.button("Return to Start"):
-    st.write(
-        "<script>parent.window.location.href='/'</script>",
-        unsafe_allow_html=True,
+    components.html(
+        """
+        <script>
+            window.top.location.href = "https://teamreadi.streamlit.app/";
+        </script>
+        """,
+        height=0,
     )
+
