@@ -1122,14 +1122,4 @@ st.download_button(
     mime="application/pdf",
 )
 
-# ---- Return to Start ----
-if st.button("Return to Start"):
-    components.html(
-        """
-        <script>
-            window.top.location.href = "https://teamreadi.streamlit.app/";
-        </script>
-        """,
-        height=0,
-    )
 
