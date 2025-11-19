@@ -773,7 +773,6 @@ def infer_project_name_from_inputs(req_files, req_url: str, job_text: str) -> st
             return line
     return "Unnamed Project"
 
-
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
@@ -812,8 +811,21 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
                 }
             )
 
-    # Window capacity in hours (used for availability % and Readiscore)
+    # Window capacity in hours (used for PDF "percent of window" text)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
+
+    # Derive an approximate number of weeks in the window
+    if max_hours > 0:
+        workdays_in_window = window_baseline / max_hours
+    else:
+        workdays_in_window = 0
+    days_per_week = len(working_days) if working_days else 5
+    if days_per_week > 0:
+        weeks_in_window = workdays_in_window / days_per_week
+    else:
+        weeks_in_window = 1.0
+    if weeks_in_window <= 0:
+        weeks_in_window = 1.0
 
     def availability_for_employee(tags: List[str]) -> int:
         """
@@ -870,13 +882,41 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             }
         )
 
-    # ----- Compute Readiscore + highlights -----
+    # ----- Compute ReadiScore + highlights (bucketed grading) -----
     results: List[Dict[str, Any]] = []
-    for c in candidates:
-        avail = availability_for_employee(c.get("calendar_tags", []))
-        avail_frac = avail / max(window_baseline, 1)
 
-        readiscore = alpha * c["skillfit"] + (1.0 - alpha) * avail_frac
+    for c in candidates:
+        # Raw hours available from calendar
+        avail = availability_for_employee(c.get("calendar_tags", []))
+
+        role_bucket = c["role_bucket"]
+
+        # 1) Role-specific weighting around the user-selected alpha
+        base_alpha = alpha or 0.7
+        if role_bucket == "PM/Admin":
+            # PM/Admin: more skills-heavy (e.g. ~85/15 when alpha=0.7)
+            skill_weight = min(0.9, base_alpha + 0.15)
+            hours_per_week_target = 8   # light-touch PM check-ins
+        elif role_bucket == "Field/Operator":
+            # Field roles: time matters more (~60/40 when alpha=0.7)
+            skill_weight = max(0.5, base_alpha - 0.10)
+            hours_per_week_target = 32  # heavier site presence
+        else:
+            # Support/Coordination and any other buckets: close to the slider
+            skill_weight = base_alpha
+            hours_per_week_target = 16  # moderate recurring effort
+
+        time_weight = 1.0 - skill_weight
+
+        # 2) Thresholded availability: compare to role-specific target hours
+        target_hours = hours_per_week_target * weeks_in_window
+        if target_hours <= 0:
+            availability_score = 1.0
+        else:
+            availability_score = min(1.0, avail / target_hours)
+
+        # 3) Final ReadiScore using skillfit (0–1) and availability_score (0–1)
+        readiscore = skill_weight * c["skillfit"] + time_weight * availability_score
 
         highlights = build_highlights_from_profiles(
             project_profile,
