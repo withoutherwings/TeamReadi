@@ -962,7 +962,11 @@ if project_name:
     title_text = f"ReadiReport: {project_name}"
 st.title(title_text)
 
-results = sorted(results, key=lambda r: r["readiscore"], reverse=True)
+results = sorted(
+    results,
+    key=lambda r: (r["readiscore"], r["skillfit"], r["hours"]),
+    reverse=True,
+)
 
 BUCKET_ORDER = ["PM/Admin", "Support/Coordination", "Field/Operator", "Out-of-scope"]
 bucket_labels = {
