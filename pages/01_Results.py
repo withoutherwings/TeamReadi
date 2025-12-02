@@ -774,6 +774,7 @@ def infer_project_name_from_inputs(req_files, req_url: str, job_text: str) -> st
             return line
     return "Unnamed Project"
 
+
 def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, str]:
     start_dt = dt.datetime.combine(start_date, dt.time(8, 0)).replace(tzinfo=UTC)
     end_dt = dt.datetime.combine(end_date, dt.time(17, 0)).replace(tzinfo=UTC)
@@ -815,7 +816,7 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
     # Window capacity in hours (used for PDF "percent of window" text)
     window_baseline = total_work_hours(start_dt, end_dt, working_days, max_hours)
 
-    # Derive an approximate number of weeks in the window
+    # Derive an approximate number of weeks in the window (kept for future use if needed)
     if max_hours > 0:
         workdays_in_window = window_baseline / max_hours
     else:
@@ -883,70 +884,70 @@ def run_results_pipeline() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int, s
             }
         )
 
-   # ----- Compute highlights + basic metrics (no scoring yet) -----
-results: List[Dict[str, Any]] = []
+    # ----- Compute highlights + basic metrics (no scoring yet) -----
+    results: List[Dict[str, Any]] = []
 
-for c in candidates:
-    # Raw hours available from calendar
-    avail = availability_for_employee(c.get("calendar_tags", []))
+    for c in candidates:
+        # Raw hours available from calendar
+        avail = availability_for_employee(c.get("calendar_tags", []))
 
-    highlights = build_highlights_from_profiles(
-        project_profile,
-        c["profile"],
-        max_items=3,
-    )
+        highlights = build_highlights_from_profiles(
+            project_profile,
+            c["profile"],
+            max_items=3,
+        )
 
-    results.append(
-        {
-            "emp_id": c["id"],
-            "display_name": c.get("display_name", c["id"]),
-            "skillfit": round(c["skillfit"], 4),   # 0–1
-            "hours": int(avail),                   # raw hours in window
-            "role_bucket": c["role_bucket"],
-            "role_title": c["role_title"],
-            "project_fit_summary": c["project_fit_summary"],
-            "unsuitable_reason": c["unsuitable_reason"],
-            "highlights": highlights,
-            "profile": c["profile"],
-        }
-    )
+        results.append(
+            {
+                "emp_id": c["id"],
+                "display_name": c.get("display_name", c["id"]),
+                "skillfit": round(c["skillfit"], 4),   # 0–1
+                "hours": int(avail),                   # raw hours in window
+                "role_bucket": c["role_bucket"],
+                "role_title": c["role_title"],
+                "project_fit_summary": c["project_fit_summary"],
+                "unsuitable_reason": c["unsuitable_reason"],
+                "highlights": highlights,
+                "profile": c["profile"],
+            }
+        )
 
-# ----- ReadiScore: per-bucket normalization of hours + role-based weights -----
+    # ----- ReadiScore: per-bucket normalization of hours + role-based weights -----
 
-# 1) Find max hours per bucket so we can normalize 0–1 within each role bucket
-max_hours_by_bucket: Dict[str, int] = {}
-for r in results:
-    b = r["role_bucket"]
-    h = r["hours"]
-    max_hours_by_bucket[b] = max(h, max_hours_by_bucket.get(b, 0))
+    # 1) Find max hours per bucket so we can normalize 0–1 within each role bucket
+    max_hours_by_bucket: Dict[str, int] = {}
+    for r in results:
+        b = r["role_bucket"]
+        h = r["hours"]
+        max_hours_by_bucket[b] = max(h, max_hours_by_bucket.get(b, 0))
 
-# Use the alpha slider as the baseline skill weight (e.g. 0.8 = 80% skills / 20% time)
-base_skill_weight = alpha or 0.8
+    # Use the alpha slider as the baseline skill weight (e.g. 0.8 = 80% skills / 20% time)
+    base_skill_weight = alpha or 0.8
 
-for r in results:
-    bucket = r["role_bucket"]
-    max_hours = max_hours_by_bucket.get(bucket, 0) or 1  # avoid divide-by-zero
+    for r in results:
+        bucket = r["role_bucket"]
+        max_bucket_hours = max_hours_by_bucket.get(bucket, 0) or 1  # avoid divide-by-zero
 
-    skillfit = r["skillfit"]                    # 0–1
-    hours_ratio = r["hours"] / max_hours        # 0–1 within this bucket
+        skillfit = r["skillfit"]                     # 0–1
+        hours_ratio = r["hours"] / max_bucket_hours  # 0–1 within this bucket
 
-    # Role-specific tweaks to the baseline skill/time tradeoff
-    if bucket == "PM/Admin":
-        # PM/Admin: very skill-heavy
-        skill_weight = min(0.95, base_skill_weight + 0.10)
-    elif bucket == "Field/Operator":
-        # Field roles: time matters more
-        skill_weight = max(0.60, base_skill_weight - 0.15)
-    else:
-        # Support/Coordination and others
-        skill_weight = base_skill_weight
+        # Role-specific tweaks to the baseline skill/time tradeoff
+        if bucket == "PM/Admin":
+            # PM/Admin: very skill-heavy
+            skill_weight = min(0.95, base_skill_weight + 0.10)
+        elif bucket == "Field/Operator":
+            # Field roles: time matters more
+            skill_weight = max(0.60, base_skill_weight - 0.15)
+        else:
+            # Support/Coordination and others
+            skill_weight = base_skill_weight
 
-    time_weight = 1.0 - skill_weight
+        time_weight = 1.0 - skill_weight
 
-    readiscore = skill_weight * skillfit + time_weight * hours_ratio
-    r["readiscore"] = round(readiscore, 4)      # 0–1
+        readiscore = skill_weight * skillfit + time_weight * hours_ratio
+        r["readiscore"] = round(readiscore, 4)      # 0–1
 
-return results, project_profile, window_baseline, project_name
+    return results, project_profile, window_baseline, project_name
 
 
 # ---------------------------------------------------------------------------
